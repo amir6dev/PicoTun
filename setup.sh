@@ -13,7 +13,6 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 BIN_DIR="/usr/local/bin"
-# 👇 مطمئن شو آدرس گیت‌هابت درسته
 REPO_URL="https://github.com/amir6dev/RsTunnel.git"
 SERVICE_DIR="/etc/systemd/system"
 
@@ -107,7 +106,7 @@ install_server() {
     U_PORT=${U_PORT:-1432}
 
     echo -e "${YELLOW}⚙️ Configuring Systemd...${NC}"
-    cat > $SERVICE_DIR/rstunnel-bridge.service <<EOF
+cat > $SERVICE_DIR/rstunnel-bridge.service <<EOF
 [Unit]
 Description=RsTunnel Bridge
 After=network.target
@@ -123,6 +122,7 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
+
     systemctl daemon-reload
     systemctl enable rstunnel-bridge
     systemctl restart rstunnel-bridge
@@ -162,7 +162,7 @@ install_client() {
     LOC=${LOC:-127.0.0.1:1432}
 
     echo -e "${YELLOW}⚙️ Configuring Systemd...${NC}"
-    cat > $SERVICE_DIR/rstunnel-upstream.service <<EOF
+cat > $SERVICE_DIR/rstunnel-upstream.service <<EOF
 [Unit]
 Description=RsTunnel Upstream
 After=network.target
@@ -178,6 +178,7 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
+
     systemctl daemon-reload
     systemctl enable rstunnel-upstream
     systemctl restart rstunnel-upstream
@@ -214,6 +215,7 @@ manage_service() {
             4) systemctl status $SVC --no-pager; read -p "Enter...";;
             5) journalctl -u $SVC -f;;
             0) return;;
+            *) echo "Invalid option"; sleep 1;;
         esac
     done
 }
