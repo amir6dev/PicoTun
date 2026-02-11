@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# ====================================================
-#      RsTunnel v8.0 - Enterprise Edition
-#      Full DaggerConnect Clone & YAML Manager
-# ====================================================
+# ==========================================
+#      DaggerConnect Automation Suite
+#      Built-in Compiler Edition
+# ==========================================
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -11,350 +11,216 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-BIN_DIR="/usr/local/bin"
+INSTALL_DIR="/usr/local/bin"
+CONFIG_DIR="/etc/DaggerConnect"
+SYSTEMD_DIR="/etc/systemd/system"
+# 👇 آدرس ریپوزیتوری خودت را اینجا بگذار
 REPO_URL="https://github.com/amir6dev/RsTunnel.git"
-CONFIG_DIR="/etc/rstunnel"
-SERVICE_DIR="/etc/systemd/system"
 
-# --- Init ---
-mkdir -p $CONFIG_DIR
-mkdir -p $CONFIG_DIR/certs
+show_banner() {
+    clear
+    echo -e "${CYAN}***********************************${NC}"
+    echo -e "${GREEN}    DaggerConnect (Source Build)   ${NC}"
+    echo -e "${CYAN}***********************************${NC}"
+    echo ""
+}
 
 check_root() {
-    if [[ $EUID -ne 0 ]]; then echo -e "${RED}Please run as root!${NC}"; exit 1; fi
+    if [[ $EUID -ne 0 ]]; then echo -e "${RED}Run as root!${NC}"; exit 1; fi
 }
 
 install_deps() {
-    if ! command -v go &> /dev/null; then
-        echo -e "${YELLOW}Installing Go & Deps...${NC}"
-        apt update -qq >/dev/null 2>&1
-        apt install -y git golang openssl curl nano >/dev/null 2>&1
-    fi
+    echo -e "${YELLOW}📦 Installing System Dependencies...${NC}"
+    apt update -qq >/dev/null 2>&1
+    apt install -y git golang openssl curl nano >/dev/null 2>&1
 }
 
-update_core() {
-    if [[ ! -f "$BIN_DIR/rstunnel" ]]; then
-        echo -e "${YELLOW}Building RsTunnel Core...${NC}"
-        rm -rf /tmp/rsbuild
-        git clone $REPO_URL /tmp/rsbuild
-        cd /tmp/rsbuild || exit
-        go mod tidy >/dev/null 2>&1
-        go build -o rstunnel main.go config.go
-        mv rstunnel $BIN_DIR/
-        chmod +x $BIN_DIR/rstunnel
-        echo -e "${GREEN}Core Installed.${NC}"
+# --- تغییر مهم: ساخت باینری از سورس ---
+build_core() {
+    echo -e "${YELLOW}⬇️  Building DaggerConnect Core...${NC}"
+    rm -rf /tmp/dagger_build
+    git clone $REPO_URL /tmp/dagger_build
+    
+    if [ ! -d "/tmp/dagger_build" ]; then
+        echo -e "${RED}❌ Failed to clone repo!${NC}"; exit 1
     fi
+    
+    cd /tmp/dagger_build || exit
+    go mod tidy >/dev/null 2>&1
+    go build -o DaggerConnect main.go
+    
+    mv DaggerConnect $INSTALL_DIR/
+    chmod +x $INSTALL_DIR/DaggerConnect
+    echo -e "${GREEN}✓ Core Installed successfully${NC}"
 }
 
 generate_ssl() {
-    if [[ ! -f "$CONFIG_DIR/certs/cert.pem" ]]; then
-        openssl req -x509 -newkey rsa:2048 -nodes \
-            -keyout $CONFIG_DIR/certs/key.pem \
-            -out $CONFIG_DIR/certs/cert.pem \
-            -days 365 -subj "/CN=www.google.com" >/dev/null 2>&1
-    fi
+    mkdir -p "$CONFIG_DIR/certs"
+    openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout "$CONFIG_DIR/certs/key.pem" \
+        -out "$CONFIG_DIR/certs/cert.pem" \
+        -days 365 -subj "/CN=www.google.com" >/dev/null 2>&1
 }
-
-# --- YAML Generators ---
-
-write_client_yaml() {
-    FILE="$CONFIG_DIR/client.yaml"
-    echo "mode: \"client\"" > $FILE
-    echo "psk: \"$PSK\"" >> $FILE
-    echo "profile: \"$PROFILE\"" >> $FILE
-    echo "verbose: true" >> $FILE
-    echo "" >> $FILE
-    echo "paths:" >> $FILE
-    echo "  - transport: \"$MODE\"" >> $FILE
-    echo "    addr: \"$SERVER_IP:$SERVER_PORT\"" >> $FILE
-    echo "    connection_pool: $POOL" >> $FILE
-    echo "    aggressive_pool: $AGG" >> $FILE
-    echo "    retry_interval: 3" >> $FILE
-    echo "    dial_timeout: 10" >> $FILE
-    echo "" >> $FILE
-    echo "obfuscation:" >> $FILE
-    echo "  enabled: true" >> $FILE
-    echo "  min_padding: 16" >> $FILE
-    echo "  max_padding: 512" >> $FILE
-    echo "  min_delay_ms: 5" >> $FILE
-    echo "  max_delay_ms: 50" >> $FILE
-    echo "  burst_chance: 0.15" >> $FILE
-    echo "" >> $FILE
-    echo "http_mimic:" >> $FILE
-    echo "  fake_domain: \"$FHOST\"" >> $FILE
-    echo "  fake_path: \"$FPATH\"" >> $FILE
-    echo "  user_agent: \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\"" >> $FILE
-    echo "  chunked_encoding: true" >> $FILE
-    echo "  session_cookie: true" >> $FILE
-    echo "  custom_headers:" >> $FILE
-    echo "    - \"X-Requested-With: XMLHttpRequest\"" >> $FILE
-    echo "    - \"Referer: https://$FHOST/\"" >> $FILE
-    echo "" >> $FILE
-    echo "smux:" >> $FILE
-    echo "  keepalive: 5" >> $FILE
-    echo "  max_recv: 16777216" >> $FILE
-    echo "  max_stream: 16777216" >> $FILE
-    echo "  frame_size: 32768" >> $FILE
-    echo "  version: 2" >> $FILE
-    echo "" >> $FILE
-    echo "advanced:" >> $FILE
-    echo "  tcp_nodelay: true" >> $FILE
-    echo "  tcp_keepalive: 15" >> $FILE
-    echo "  tcp_read_buffer: 8388608" >> $FILE
-    echo "  tcp_write_buffer: 8388608" >> $FILE
-    echo "  connection_timeout: 60" >> $FILE
-}
-
-write_server_yaml() {
-    FILE="$CONFIG_DIR/server.yaml"
-    echo "mode: \"server\"" > $FILE
-    echo "listen: \"0.0.0.0:$TPORT\"" >> $FILE
-    echo "transport: \"$MODE\"" >> $FILE
-    echo "psk: \"$PSK\"" >> $FILE
-    echo "profile: \"$PROFILE\"" >> $FILE
-    echo "verbose: true" >> $FILE
-    echo "" >> $FILE
-    echo "cert_file: \"$CONFIG_DIR/certs/cert.pem\"" >> $FILE
-    echo "key_file: \"$CONFIG_DIR/certs/key.pem\"" >> $FILE
-    echo "" >> $FILE
-    echo "maps:" >> $FILE
-    echo "  - type: tcp" >> $FILE
-    echo "    bind: \"0.0.0.0:$UPORT\"" >> $FILE
-    echo "    target: \"127.0.0.1:$TPORT\"" >> $FILE
-    echo "" >> $FILE
-    echo "obfuscation:" >> $FILE
-    echo "  enabled: true" >> $FILE
-    echo "  min_padding: 16" >> $FILE
-    echo "  max_padding: 512" >> $FILE
-    echo "  min_delay_ms: 5" >> $FILE
-    echo "  max_delay_ms: 50" >> $FILE
-    echo "  burst_chance: 0.15" >> $FILE
-    echo "" >> $FILE
-    echo "http_mimic:" >> $FILE
-    echo "  fake_domain: \"$FHOST\"" >> $FILE
-    echo "  fake_path: \"$FPATH\"" >> $FILE
-    echo "  user_agent: \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\"" >> $FILE
-    echo "  chunked_encoding: true" >> $FILE
-    echo "  session_cookie: true" >> $FILE
-    echo "  custom_headers:" >> $FILE
-    echo "    - \"X-Requested-With: XMLHttpRequest\"" >> $FILE
-    echo "    - \"Referer: https://$FHOST/\"" >> $FILE
-    echo "" >> $FILE
-    echo "smux:" >> $FILE
-    echo "  keepalive: 5" >> $FILE
-    echo "  max_recv: 16777216" >> $FILE
-    echo "  max_stream: 16777216" >> $FILE
-    echo "  frame_size: 32768" >> $FILE
-    echo "  version: 2" >> $FILE
-    echo "" >> $FILE
-    echo "advanced:" >> $FILE
-    echo "  tcp_nodelay: true" >> $FILE
-    echo "  tcp_keepalive: 15" >> $FILE
-    echo "  tcp_read_buffer: 8388608" >> $FILE
-    echo "  tcp_write_buffer: 8388608" >> $FILE
-    echo "  connection_timeout: 60" >> $FILE
-}
-
-# --- Service Creator ---
 
 create_service() {
-    NAME=$1
-    CFG=$2
-    FILE="$SERVICE_DIR/$NAME.service"
-    
-    echo "[Unit]" > $FILE
-    echo "Description=RsTunnel $NAME" >> $FILE
-    echo "After=network.target" >> $FILE
-    echo "" >> $FILE
-    echo "[Service]" >> $FILE
-    echo "Type=simple" >> $FILE
-    echo "User=root" >> $FILE
-    echo "LimitNOFILE=1048576" >> $FILE
-    echo "ExecStart=$BIN_DIR/rstunnel -c $CFG" >> $FILE
-    echo "Restart=always" >> $FILE
-    echo "RestartSec=3" >> $FILE
-    echo "" >> $FILE
-    echo "[Install]" >> $FILE
-    echo "WantedBy=multi-user.target" >> $FILE
-    
+    local MODE=$1
+    local SERVICE_FILE="$SYSTEMD_DIR/DaggerConnect-${MODE}.service"
+
+    cat > "$SERVICE_FILE" << EOF
+[Unit]
+Description=DaggerConnect Reverse Tunnel ${MODE^}
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$CONFIG_DIR
+ExecStart=$INSTALL_DIR/DaggerConnect -c $CONFIG_DIR/${MODE}.yaml
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
     systemctl daemon-reload
-    systemctl enable $NAME
-    systemctl restart $NAME
+    systemctl enable DaggerConnect-${MODE}
+    systemctl restart DaggerConnect-${MODE}
 }
 
-# --- Install Menus ---
+# --- SERVER INSTALL ---
 
-install_client_menu() {
+install_server() {
     install_deps
-    update_core
-    echo -e "${CYAN}:: INSTALL CLIENT ::${NC}"
+    build_core
+    mkdir -p $CONFIG_DIR
     
+    echo -e "${CYAN}:: SERVER CONFIGURATION ::${NC}"
+    read -p "Tunnel Listen Port [1010]: " LISTEN_PORT; LISTEN_PORT=${LISTEN_PORT:-1010}
     read -p "PSK: " PSK
+    
+    # Maps Configuration
+    echo -e "${YELLOW}Configure Port Mapping (Reverse):${NC}"
+    read -p "Bind Port (Listen on Server) [1400]: " BIND_PORT; BIND_PORT=${BIND_PORT:-1400}
+    read -p "Target Port (Local on Client) [1400]: " TARGET_PORT; TARGET_PORT=${TARGET_PORT:-1400}
+    
+    echo "Transport: 1) httpmux 2) httpsmux"
+    read -p "Select: " T; if [[ "$T" == "2" ]]; then TRANS="httpsmux"; else TRANS="httpmux"; fi
+    
+    if [[ "$TRANS" == "httpsmux" ]]; then generate_ssl; fi
+    
+    # Write YAML
+    cat > $CONFIG_DIR/server.yaml <<EOF
+mode: "server"
+listen: "0.0.0.0:$LISTEN_PORT"
+transport: "$TRANS"
+psk: "$PSK"
+profile: "aggressive"
+verbose: false
+
+maps:
+  - type: tcp
+    bind: "0.0.0.0:$BIND_PORT"
+    target: "127.0.0.1:$TARGET_PORT"
+  - type: udp
+    bind: "0.0.0.0:$BIND_PORT"
+    target: "127.0.0.1:$TARGET_PORT"
+
+obfuscation:
+  enabled: true
+  min_padding: 16
+  max_padding: 512
+  min_delay_ms: 5
+
+http_mimic:
+  fake_domain: "www.google.com"
+  fake_path: "/search"
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  chunked_encoding: true
+  session_cookie: true
+EOF
+
+    if [[ "$TRANS" == "httpsmux" ]]; then
+        echo "cert_file: \"$CONFIG_DIR/certs/cert.pem\"" >> $CONFIG_DIR/server.yaml
+        echo "key_file: \"$CONFIG_DIR/certs/key.pem\"" >> $CONFIG_DIR/server.yaml
+    fi
+
+    create_service "server"
+    echo -e "${GREEN}Server Installed!${NC}"
+}
+
+# --- CLIENT INSTALL ---
+
+install_client() {
+    install_deps
+    build_core
+    mkdir -p $CONFIG_DIR
+    
+    echo -e "${CYAN}:: CLIENT CONFIGURATION ::${NC}"
     read -p "Server IP: " SERVER_IP
-    read -p "Server Port [443]: " SERVER_PORT; SERVER_PORT=${SERVER_PORT:-443}
-    
-    echo "Transport: 1) httpmux 2) httpsmux"
-    read -p "Select: " M; if [[ "$M" == "2" ]]; then MODE="httpsmux"; else MODE="httpmux"; fi
-    
-    echo "Profile: 1) balanced 2) aggressive"
-    read -p "Select: " P; if [[ "$P" == "2" ]]; then PROFILE="aggressive"; else PROFILE="balanced"; fi
-    
-    read -p "Fake Host [www.google.com]: " FHOST; FHOST=${FHOST:-www.google.com}
-    read -p "Fake Path [/search]: " FPATH; FPATH=${FPATH:-/search}
-    
-    read -p "Connection Pool [4]: " POOL; POOL=${POOL:-4}
-    read -p "Aggressive Pool (true/false) [false]: " AGG; AGG=${AGG:-false}
-    
-    write_client_yaml
-    create_service "rstunnel-client" "$CONFIG_DIR/client.yaml"
-    
-    echo -e "${GREEN}✅ Client Installed!${NC}"
-    read -p "Press Enter..."
-}
-
-install_server_menu() {
-    install_deps
-    update_core
-    echo -e "${CYAN}:: INSTALL SERVER ::${NC}"
-    
-    read -p "Tunnel Port [443]: " TPORT; TPORT=${TPORT:-443}
+    read -p "Server Tunnel Port [1010]: " SERVER_PORT; SERVER_PORT=${SERVER_PORT:-1010}
     read -p "PSK: " PSK
     
     echo "Transport: 1) httpmux 2) httpsmux"
-    read -p "Select: " M; if [[ "$M" == "2" ]]; then MODE="httpsmux"; else MODE="httpmux"; fi
+    read -p "Select: " T; if [[ "$T" == "2" ]]; then TRANS="httpsmux"; else TRANS="httpmux"; fi
     
-    echo "Profile: 1) balanced 2) aggressive"
-    read -p "Select: " P; if [[ "$P" == "2" ]]; then PROFILE="aggressive"; else PROFILE="balanced"; fi
-    
-    read -p "Fake Host [www.google.com]: " FHOST; FHOST=${FHOST:-www.google.com}
-    read -p "Fake Path [/search]: " FPATH; FPATH=${FPATH:-/search}
-    
-    read -p "User Bind Port [1432]: " UPORT; UPORT=${UPORT:-1432}
-    
-    if [[ "$MODE" == "httpsmux" ]]; then generate_ssl; fi
-    
-    write_server_yaml
-    create_service "rstunnel-server" "$CONFIG_DIR/server.yaml"
-    
-    echo -e "${GREEN}✅ Server Installed!${NC}"
-    read -p "Press Enter..."
+    cat > $CONFIG_DIR/client.yaml <<EOF
+mode: "client"
+psk: "$PSK"
+profile: "aggressive"
+verbose: false
+
+paths:
+  - transport: "$TRANS"
+    addr: "$SERVER_IP:$SERVER_PORT"
+    connection_pool: 4
+    aggressive_pool: false
+    retry_interval: 3
+    dial_timeout: 10
+
+obfuscation:
+  enabled: true
+  min_padding: 16
+  max_padding: 512
+  min_delay_ms: 5
+
+http_mimic:
+  fake_domain: "www.google.com"
+  fake_path: "/search"
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  chunked_encoding: true
+  session_cookie: true
+  custom_headers:
+    - "X-Requested-With: XMLHttpRequest"
+    - "Referer: https://www.google.com/"
+EOF
+
+    create_service "client"
+    echo -e "${GREEN}Client Installed!${NC}"
 }
 
-# --- Management Menus ---
+# --- MENUS ---
 
-manage_client() {
-    while true; do
-        clear
-        echo -e "${CYAN}:: CLIENT SETTINGS ::${NC}"
-        echo "  1) Start Client"
-        echo "  2) Stop Client"
-        echo "  3) Restart Client"
-        echo "  4) Client Status"
-        echo "  5) View Client Logs (Live)"
-        echo "  6) Enable Client Auto-start"
-        echo "  7) Disable Client Auto-start"
-        echo ""
-        echo "  8) View Client Config"
-        echo "  9) Edit Client Config"
-        echo "  10) Delete Client Config & Service"
-        echo ""
-        echo "  0) Back to Settings"
-        echo ""
-        read -p "Select option: " OPT
-        
-        SVC="rstunnel-client"
-        FILE="$CONFIG_DIR/client.yaml"
-        
-        case $OPT in
-            1) systemctl start $SVC; echo "Started."; sleep 1;;
-            2) systemctl stop $SVC; echo "Stopped."; sleep 1;;
-            3) systemctl restart $SVC; echo "Restarted."; sleep 1;;
-            4) systemctl status $SVC --no-pager; read -p "Enter...";;
-            5) journalctl -u $SVC -f;;
-            6) systemctl enable $SVC; echo "Enabled."; sleep 1;;
-            7) systemctl disable $SVC; echo "Disabled."; sleep 1;;
-            8) cat $FILE; read -p "Enter...";;
-            9) nano $FILE; systemctl restart $SVC; echo "Updated."; sleep 1;;
-            10) 
-                systemctl stop $SVC
-                systemctl disable $SVC
-                rm -f $FILE $SERVICE_DIR/$SVC.service
-                systemctl daemon-reload
-                echo "Deleted."; sleep 1; return;;
-            0) return;;
-            *) echo "Invalid"; sleep 1;;
-        esac
-    done
-}
-
-manage_server() {
-    while true; do
-        clear
-        echo -e "${CYAN}:: SERVER SETTINGS ::${NC}"
-        echo "  1) Start Server"
-        echo "  2) Stop Server"
-        echo "  3) Restart Server"
-        echo "  4) Server Status"
-        echo "  5) View Server Logs (Live)"
-        echo "  6) Enable Server Auto-start"
-        echo "  7) Disable Server Auto-start"
-        echo ""
-        echo "  8) View Server Config"
-        echo "  9) Edit Server Config"
-        echo "  10) Delete Server Config & Service"
-        echo ""
-        echo "  0) Back to Settings"
-        echo ""
-        read -p "Select option: " OPT
-        
-        SVC="rstunnel-server"
-        FILE="$CONFIG_DIR/server.yaml"
-        
-        case $OPT in
-            1) systemctl start $SVC; echo "Started."; sleep 1;;
-            2) systemctl stop $SVC; echo "Stopped."; sleep 1;;
-            3) systemctl restart $SVC; echo "Restarted."; sleep 1;;
-            4) systemctl status $SVC --no-pager; read -p "Enter...";;
-            5) journalctl -u $SVC -f;;
-            6) systemctl enable $SVC; echo "Enabled."; sleep 1;;
-            7) systemctl disable $SVC; echo "Disabled."; sleep 1;;
-            8) cat $FILE; read -p "Enter...";;
-            9) nano $FILE; systemctl restart $SVC; echo "Updated."; sleep 1;;
-            10) 
-                systemctl stop $SVC
-                systemctl disable $SVC
-                rm -f $FILE $SERVICE_DIR/$SVC.service
-                systemctl daemon-reload
-                echo "Deleted."; sleep 1; return;;
-            0) return;;
-            *) echo "Invalid"; sleep 1;;
-        esac
-    done
-}
-
-# --- Main ---
-check_root
-while true; do
+main_menu() {
     clear
-    echo -e "${CYAN}=== RsTunnel v8.0 (Enterprise) ===${NC}"
-    echo "  1) Install Server"
-    echo "  2) Install Client"
-    echo "  3) Server Settings"
-    echo "  4) Client Settings"
-    echo "  5) Uninstall All"
-    echo "  0) Exit"
-    echo ""
-    read -p "Select option: " OPT
+    echo -e "${CYAN}=== DaggerConnect Manager ===${NC}"
+    echo "1) Install Server"
+    echo "2) Install Client"
+    echo "3) Uninstall"
+    echo "0) Exit"
+    read -p "Select: " OPT
     case $OPT in
-        1) install_server_menu ;;
-        2) install_client_menu ;;
-        3) manage_server ;;
-        4) manage_client ;;
-        5) 
-           systemctl stop rstunnel-client rstunnel-server 2>/dev/null
-           rm -f $BIN_DIR/rstunnel
-           rm -rf $CONFIG_DIR
-           echo "Uninstalled."; sleep 1;;
+        1) install_server ;;
+        2) install_client ;;
+        3) 
+           systemctl stop DaggerConnect-server DaggerConnect-client
+           rm -rf $INSTALL_DIR/DaggerConnect $CONFIG_DIR
+           echo "Uninstalled." ;;
         0) exit ;;
     esac
-done
+}
+
+check_root
+main_menu
