@@ -1,164 +1,151 @@
 #!/bin/bash
 
 # ====================================================
-#      RsTunnel v4.0 - DaggerConnect Edition
-#      Advanced Manager with Full Options
+#      RsTunnel v6.0 - Ultimate Enterprise Manager
+#      Graphic Interface | Multi-Tunnel | Full Control
 # ====================================================
 
-# --- Colors ---
+# --- Colors & Styles ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
+BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
-NC='\033[0m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
 
-# --- Configs ---
+# --- Configurations ---
 BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/amir6dev/RsTunnel.git"
 SERVICE_DIR="/etc/systemd/system"
 CONFIG_DIR="/etc/rstunnel"
 
-# --- Helper Functions ---
+# --- System Checks & Helpers ---
 
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        echo -e "${RED}❌ Error: Please run this script as root!${NC}"
+        echo -e "${RED}${BOLD}❌ Critical Error: Please run this script as root!${NC}"
         exit 1
     fi
 }
 
-show_banner() {
+header() {
     clear
-    echo -e "${CYAN}"
-    echo "========================================================"
-    echo "           🚀 RsTunnel Auto Installer v4.0"
-    echo "      Based on DaggerConnect Architecture (Go)"
-    echo "========================================================"
-    echo -e "${NC}"
+    echo -e "${CYAN}==========================================================${NC}"
+    echo -e "${PURPLE}      🚀 RsTunnel Ultimate Manager v6.0 (Enterprise)${NC}"
+    echo -e "${CYAN}==========================================================${NC}"
+    echo -e "${YELLOW}    » Multi-Port Tunneling  » Advanced Traffic Obfuscation${NC}"
+    echo -e "${YELLOW}    » HTTP/HTTPS Mimicry    » Real-time Monitoring${NC}"
+    echo -e "${CYAN}==========================================================${NC}"
+    echo ""
 }
 
-install_dependencies() {
-    echo -e "${YELLOW}📦 Installing System Dependencies...${NC}"
-    apt update -qq >/dev/null 2>&1
-    apt install -y git golang openssl curl >/dev/null 2>&1
-    echo -e "${GREEN}✅ Dependencies Ready.${NC}"
+install_deps() {
+    if ! command -v go &> /dev/null; then
+        echo -e "${BLUE}📦 Installing System Dependencies (Go, Git, OpenSSL)...${NC}"
+        apt update -qq >/dev/null 2>&1
+        apt install -y git golang openssl curl >/dev/null 2>&1
+    fi
 }
 
 update_core() {
-    echo -e "${YELLOW}⬇️ Downloading Core from GitHub...${NC}"
-    rm -rf /tmp/rsbuild
-    git clone $REPO_URL /tmp/rsbuild
-    
-    if [ ! -d "/tmp/rsbuild" ]; then
-        echo -e "${RED}❌ Error: Could not clone repository.${NC}"
-        return
+    # Only build if missing or forced
+    if [[ ! -f "$BIN_DIR/rstunnel-bridge" ]]; then
+        echo -e "${BLUE}⬇️  Downloading & Compiling Core Engine...${NC}"
+        rm -rf /tmp/rsbuild
+        git clone $REPO_URL /tmp/rsbuild
+        if [ ! -d "/tmp/rsbuild" ]; then
+            echo -e "${RED}❌ Error: Failed to clone repository.${NC}"
+            return
+        fi
+        cd /tmp/rsbuild || exit
+        
+        echo -e "${PURPLE}⚙️  Building Binaries...${NC}"
+        go mod tidy >/dev/null 2>&1
+        go build -o rstunnel-bridge bridge.go
+        go build -o rstunnel-upstream upstream.go
+        
+        mv rstunnel-* $BIN_DIR/
+        chmod +x $BIN_DIR/rstunnel-*
+        echo -e "${GREEN}✅ Core Engine Installed Successfully.${NC}"
+        sleep 1
     fi
-
-    cd /tmp/rsbuild || exit
-    
-    echo -e "${PURPLE}⚙️ Compiling Binary Files...${NC}"
-    go mod tidy >/dev/null 2>&1
-    go build -o rstunnel-bridge bridge.go
-    go build -o rstunnel-upstream upstream.go
-    
-    mv rstunnel-* $BIN_DIR/
-    chmod +x $BIN_DIR/rstunnel-*
-    
-    echo -e "${GREEN}✅ Core Installed Successfully.${NC}"
 }
 
 generate_ssl() {
-    echo -e "${YELLOW}🔐 Generating Self-Signed SSL Certificate...${NC}"
     mkdir -p $CONFIG_DIR/certs
-    openssl req -x509 -newkey rsa:2048 -nodes \
-        -keyout $CONFIG_DIR/certs/key.pem \
-        -out $CONFIG_DIR/certs/cert.pem \
-        -days 365 -subj "/CN=www.google.com" >/dev/null 2>&1
-    echo -e "${GREEN}✅ Certificate Generated.${NC}"
-}
-
-detect_service() {
-    SVC=""
-    ROLE="None"
-    STATUS="${RED}Inactive${NC}"
-    
-    if systemctl is-active --quiet rstunnel-bridge; then
-        SVC="rstunnel-bridge"
-        ROLE="Bridge (Server)"
-        STATUS="${GREEN}Active (Running)${NC}"
-    elif systemctl is-active --quiet rstunnel-upstream; then
-        SVC="rstunnel-upstream"
-        ROLE="Upstream (Client)"
-        STATUS="${GREEN}Active (Running)${NC}"
+    if [[ ! -f "$CONFIG_DIR/certs/cert.pem" ]]; then
+        echo -e "${YELLOW}🔐 Generating Self-Signed SSL Certificates...${NC}"
+        openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout $CONFIG_DIR/certs/key.pem \
+            -out $CONFIG_DIR/certs/cert.pem \
+            -days 365 -subj "/CN=www.google.com" >/dev/null 2>&1
     fi
 }
 
-# --- Install Menus ---
+# --- Tunnel Installation Functions ---
 
 install_server() {
-    install_dependencies
+    install_deps
     update_core
-    show_banner
-    echo -e "${CYAN}:: INSTALL SERVER (BRIDGE MODE) ::${NC}"
+    header
+    echo -e "${GREEN}:: CREATE NEW BRIDGE (SERVER) TUNNEL ::${NC}"
     echo ""
     
-    # 1. Transport
-    echo -e "${YELLOW}1. Select Transport Type:${NC}"
-    echo "   1) httpmux   - HTTP Mimicry (Standard)"
-    echo "   2) httpsmux  - HTTPS Mimicry (TLS + DPI Bypass) ⭐"
+    # 1. Port Selection
+    echo -e "${BOLD}1. Tunnel Configuration:${NC}"
+    read -p "   - Tunnel Port (Must be unique) [443]: " T_PORT
+    T_PORT=${T_PORT:-443}
+
+    SERVICE_NAME="rstunnel-bridge-$T_PORT"
+    if [[ -f "$SERVICE_DIR/$SERVICE_NAME.service" ]]; then
+        echo -e "${RED}⚠️  Error: A tunnel on port $T_PORT already exists!${NC}"
+        read -p "   Press Enter to return..."
+        return
+    fi
+
+    # 2. Transport
+    echo ""
+    echo -e "${BOLD}2. Transport Protocol:${NC}"
+    echo "   1) httpmux   (HTTP Mimicry)"
+    echo "   2) httpsmux  (HTTPS Mimicry + TLS) ⭐"
     read -p "   Select [1-2]: " T_OPT
     if [[ "$T_OPT" == "2" ]]; then MODE="httpsmux"; else MODE="httpmux"; fi
 
-    # 2. Port
-    echo ""
-    echo -e "${YELLOW}2. Tunnel Configuration:${NC}"
-    read -p "   - Tunnel Port (Listen for Upstream) [443]: " T_PORT
-    T_PORT=${T_PORT:-443}
-    read -p "   - User Bind Port (Listen for Users) [1432]: " U_PORT
-    U_PORT=${U_PORT:-1432}
-
     # 3. Profile
     echo ""
-    echo -e "${YELLOW}3. Performance Profile:${NC}"
-    echo "   1) balanced      (Default)"
-    echo "   2) aggressive    (High Throughput)"
-    echo "   3) gaming        (Low Latency)"
+    echo -e "${BOLD}3. Performance Profile:${NC}"
+    echo "   1) balanced"
+    echo "   2) aggressive (High Speed)"
+    echo "   3) gaming     (Low Latency)"
     read -p "   Select [1-3]: " P_OPT
     case $P_OPT in 2) PROF="aggressive";; 3) PROF="gaming";; *) PROF="balanced";; esac
 
-    # 4. SSL
+    # 4. SSL & Configs
     CERT_FLAGS=""
     if [[ "$MODE" == "httpsmux" ]]; then
-        echo ""
-        echo -e "${YELLOW}4. SSL Configuration:${NC}"
-        echo "   1) Auto-Generate Self-Signed Cert"
-        echo "   2) Use Existing Cert Path"
-        read -p "   Select [1-2]: " S_OPT
-        if [[ "$S_OPT" == "1" ]]; then
-            generate_ssl
-            CERT_FLAGS="-cert $CONFIG_DIR/certs/cert.pem -key $CONFIG_DIR/certs/key.pem"
-        else
-            read -p "   - Cert Path: " CP
-            read -p "   - Key Path: " KP
-            CERT_FLAGS="-cert $CP -key $KP"
-        fi
+        generate_ssl
+        CERT_FLAGS="-cert $CONFIG_DIR/certs/cert.pem -key $CONFIG_DIR/certs/key.pem"
     fi
 
-    # 5. Mimicry
     echo ""
-    echo -e "${YELLOW}5. HTTP Mimicry Settings:${NC}"
+    echo -e "${BOLD}4. Mimicry Settings:${NC}"
     read -p "   - Fake Host [www.google.com]: " F_HOST
     F_HOST=${F_HOST:-www.google.com}
     read -p "   - Fake Path [/search]: " F_PATH
     F_PATH=${F_PATH:-/search}
+    
+    read -p "   - User Bind Port (Local V2Ray) [1432]: " U_PORT
+    U_PORT=${U_PORT:-1432}
 
-    # Service
+    # Service Creation
     echo ""
-    echo -e "${PURPLE}⚙️  Creating Systemd Service...${NC}"
-cat <<EOF > $SERVICE_DIR/rstunnel-bridge.service
+    echo -e "${PURPLE}⚙️  Generating Systemd Service ($SERVICE_NAME)...${NC}"
+
+cat <<EOF > $SERVICE_DIR/$SERVICE_NAME.service
 [Unit]
-Description=RsTunnel Bridge Server
+Description=RsTunnel Bridge Port $T_PORT
 After=network.target
 
 [Service]
@@ -174,72 +161,63 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable rstunnel-bridge
-    systemctl restart rstunnel-bridge
+    systemctl enable $SERVICE_NAME
+    systemctl start $SERVICE_NAME
     
     echo ""
-    echo -e "${GREEN}✅ Server Installed & Running!${NC}"
-    echo -e "   Mode: $MODE | Profile: $PROF | Port: $T_PORT"
-    read -p "Press Enter to continue..."
+    echo -e "${GREEN}✅ Tunnel Successfully Created on Port $T_PORT!${NC}"
+    read -p "   Press Enter to continue..."
 }
 
 install_client() {
-    install_dependencies
+    install_deps
     update_core
-    show_banner
-    echo -e "${CYAN}:: INSTALL CLIENT (UPSTREAM MODE) ::${NC}"
+    header
+    echo -e "${GREEN}:: CREATE NEW UPSTREAM (CLIENT) TUNNEL ::${NC}"
     echo ""
     
-    # 1. Connection
-    echo -e "${YELLOW}1. Connection Settings:${NC}"
-    read -p "   - Bridge IP (Iran Server IP): " S_IP
-    read -p "   - Bridge Port [443]: " S_PORT
+    read -p "   - Server IP Address: " S_IP
+    read -p "   - Server Port [443]: " S_PORT
     S_PORT=${S_PORT:-443}
 
-    # 2. Transport
+    SERVICE_NAME="rstunnel-upstream-$S_PORT"
+    if [[ -f "$SERVICE_DIR/$SERVICE_NAME.service" ]]; then
+        echo -e "${RED}⚠️  Error: A client for port $S_PORT already exists!${NC}"
+        read -p "   Press Enter to return..."
+        return
+    fi
+
     echo ""
-    echo -e "${YELLOW}2. Select Transport (Must match Server):${NC}"
     echo "   1) httpmux"
     echo "   2) httpsmux"
-    read -p "   Select [1-2]: " T_OPT
+    read -p "   Select Transport [1-2]: " T_OPT
     if [[ "$T_OPT" == "2" ]]; then MODE="httpsmux"; else MODE="httpmux"; fi
 
-    # 3. Profile
     echo ""
-    echo -e "${YELLOW}3. Select Profile:${NC}"
     echo "   1) balanced"
     echo "   2) aggressive"
     echo "   3) gaming"
-    read -p "   Select [1-3]: " P_OPT
+    read -p "   Select Profile [1-3]: " P_OPT
     case $P_OPT in 2) PROF="aggressive";; 3) PROF="gaming";; *) PROF="balanced";; esac
 
-    # 4. Mimicry
     echo ""
-    echo -e "${YELLOW}4. HTTP Mimicry Settings:${NC}"
     read -p "   - Fake Host [www.google.com]: " F_HOST
     F_HOST=${F_HOST:-www.google.com}
-    read -p "   - Fake Path [/search]: " F_PATH
-    F_PATH=${F_PATH:-/search}
-
-    # 5. Target
-    echo ""
-    echo -e "${YELLOW}5. Local Forwarding:${NC}"
-    read -p "   - Local Panel Address [127.0.0.1:1432]: " LOC
+    read -p "   - Local Listen Address [127.0.0.1:1432]: " LOC
     LOC=${LOC:-127.0.0.1:1432}
 
-    # Service
-    echo ""
-    echo -e "${PURPLE}⚙️  Creating Systemd Service...${NC}"
-cat <<EOF > $SERVICE_DIR/rstunnel-upstream.service
+    echo -e "${PURPLE}⚙️  Generating Systemd Service...${NC}"
+
+cat <<EOF > $SERVICE_DIR/$SERVICE_NAME.service
 [Unit]
-Description=RsTunnel Upstream Client
+Description=RsTunnel Client to $S_PORT
 After=network.target
 
 [Service]
 Type=simple
 User=root
 LimitNOFILE=1048576
-ExecStart=$BIN_DIR/rstunnel-upstream -c $S_IP:$S_PORT -p $LOC -m $MODE -profile $PROF -host $F_HOST -path $F_PATH
+ExecStart=$BIN_DIR/rstunnel-upstream -c $S_IP:$S_PORT -p $LOC -m $MODE -profile $PROF -host $F_HOST
 Restart=always
 RestartSec=3
 
@@ -248,102 +226,162 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable rstunnel-upstream
-    systemctl restart rstunnel-upstream
+    systemctl enable $SERVICE_NAME
+    systemctl start $SERVICE_NAME
     
-    echo ""
-    echo -e "${GREEN}✅ Client Installed & Connected!${NC}"
-    read -p "Press Enter to continue..."
+    echo -e "${GREEN}✅ Client Connection Established!${NC}"
+    read -p "   Press Enter to continue..."
 }
 
-# --- Management & Uninstall ---
+# --- Management Functions ---
 
-manage_service() {
-    detect_service
-    if [[ "$SVC" == "" ]]; then
-        echo -e "${RED}❌ No active RsTunnel service found.${NC}"
-        read -p "Press Enter..."
-        return
+list_tunnels() {
+    echo -e "${CYAN}--- Active Tunnels List ---${NC}"
+    services=$(systemctl list-units --all --plain --no-legend | grep -o 'rstunnel-[^ ]*')
+    
+    if [[ -z "$services" ]]; then
+        echo -e "${YELLOW}   No active tunnels found.${NC}"
+        return 1
     fi
 
+    i=1
+    declare -a SERVICE_ARRAY
+    for svc in $services; do
+        if systemctl is-active --quiet $svc; then
+            status="${GREEN}● Active${NC}"
+        else
+            status="${RED}● Inactive${NC}"
+        fi
+        
+        # Clean up name for display
+        clean_name=${svc//rstunnel-/}
+        clean_name=${clean_name//.service/}
+        
+        echo -e "   $i) ${BOLD}$clean_name${NC} \t [$status] \t ($svc)"
+        SERVICE_ARRAY[$i]=$svc
+        ((i++))
+    done
+    return 0
+}
+
+manage_tunnels() {
     while true; do
-        show_banner
-        echo -e "   Current Service: ${YELLOW}$SVC${NC}"
-        echo -e "   Role:            ${CYAN}$ROLE${NC}"
-        echo -e "   Status:          $STATUS"
+        header
+        echo -e "${GREEN}:: TUNNEL MANAGEMENT ::${NC}"
         echo ""
-        echo "   1) Start Service"
-        echo "   2) Stop Service"
-        echo "   3) Restart Service"
-        echo "   4) View Live Logs"
-        echo "   0) Back to Menu"
+        list_tunnels
+        if [[ $? -eq 1 ]]; then read -p "   Press Enter to return..."; return; fi
+        
         echo ""
-        read -p "   Select Option: " OPT
-        case $OPT in
-            1) systemctl start $SVC; echo -e "${GREEN}Started.${NC}"; sleep 1;;
-            2) systemctl stop $SVC; echo -e "${RED}Stopped.${NC}"; sleep 1;;
-            3) systemctl restart $SVC; echo -e "${GREEN}Restarted.${NC}"; sleep 1;;
-            4) journalctl -u $SVC -f;;
-            0) return;;
-            *) echo "Invalid"; sleep 1;;
-        esac
-        detect_service # Refresh status
+        echo -e "${YELLOW}Enter the number of the tunnel to manage (or 0 to back):${NC}"
+        read -p "   > " NUM
+        
+        if [[ "$NUM" == "0" ]]; then return; fi
+        
+        SELECTED_SVC=${SERVICE_ARRAY[$NUM]}
+        if [[ -z "$SELECTED_SVC" ]]; then 
+            echo -e "${RED}Invalid selection!${NC}"
+            sleep 1
+            continue
+        fi
+        
+        while true; do
+            header
+            echo -e "   Managing Tunnel: ${CYAN}$SELECTED_SVC${NC}"
+            echo ""
+            echo "   1) ${GREEN}Start Tunnel${NC}"
+            echo "   2) ${RED}Stop Tunnel${NC}"
+            echo "   3) ${YELLOW}Restart Tunnel${NC}"
+            echo "   4) ${BLUE}View Live Logs${NC}"
+            echo "   5) ${RED}${BOLD}DELETE TUNNEL (Permanent)${NC}"
+            echo "   0) Back to list"
+            echo ""
+            read -p "   Select Action: " ACTION
+            
+            case $ACTION in
+                1) systemctl start $SELECTED_SVC; echo -e "${GREEN}Started.${NC}"; sleep 1;;
+                2) systemctl stop $SELECTED_SVC; echo -e "${RED}Stopped.${NC}"; sleep 1;;
+                3) systemctl restart $SELECTED_SVC; echo -e "${YELLOW}Restarted.${NC}"; sleep 1;;
+                4) journalctl -u $SELECTED_SVC -f;;
+                5) 
+                    echo -e "${RED}${BOLD}⚠️  WARNING: This will delete '$SELECTED_SVC' permanently.${NC}"
+                    read -p "   Are you sure? (y/N): " DEL_CONF
+                    if [[ "$DEL_CONF" == "y" ]]; then
+                        systemctl stop $SELECTED_SVC
+                        systemctl disable $SELECTED_SVC
+                        rm -f $SERVICE_DIR/$SELECTED_SVC.service
+                        systemctl daemon-reload
+                        echo -e "${GREEN}✅ Tunnel Deleted Successfully.${NC}"
+                        sleep 1
+                        break # Break inner loop to refresh list
+                    fi
+                    ;;
+                0) break;; # Break inner loop
+            esac
+        done
     done
 }
 
 uninstall_all() {
-    show_banner
-    echo -e "${RED}⚠️  DANGER ZONE: FULL UNINSTALL ⚠️${NC}"
+    header
+    echo -e "${RED}${BOLD}:: DANGER ZONE: FULL UNINSTALL ::${NC}"
     echo ""
-    echo "   This action will remove:"
-    echo "   1. All RsTunnel Services (Bridge & Upstream)"
-    echo "   2. All Binary Files"
-    echo "   3. All Configurations & SSL Certificates"
+    echo "   This action will:"
+    echo "   1. Stop and Delete ALL RsTunnel Services"
+    echo "   2. Remove ALL Binaries and Configurations"
+    echo "   3. Clean Systemd entries"
     echo ""
-    read -p "   Are you sure? (y/N): " CONFIRM
+    read -p "   Are you sure you want to proceed? (yes/no): " CONFIRM
     
-    if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+    if [[ "$CONFIRM" != "yes" ]]; then
         return
     fi
 
-    echo -e "${YELLOW}Stopping services...${NC}"
-    systemctl stop rstunnel-bridge rstunnel-upstream 2>/dev/null
-    systemctl disable rstunnel-bridge rstunnel-upstream 2>/dev/null
-    
-    echo -e "${YELLOW}Removing files...${NC}"
-    rm -f $SERVICE_DIR/rstunnel-*.service
+    echo ""
+    echo -e "${YELLOW}Stopping all services...${NC}"
+    services=$(systemctl list-units --all --plain --no-legend | grep -o 'rstunnel-[^ ]*')
+    for svc in $services; do
+        echo "   - Removing $svc..."
+        systemctl stop $svc 2>/dev/null
+        systemctl disable $svc 2>/dev/null
+        rm -f $SERVICE_DIR/$svc.service
+    done
+
+    echo -e "${YELLOW}Cleaning files...${NC}"
     rm -f $BIN_DIR/rstunnel-*
     rm -rf $CONFIG_DIR
     
     systemctl daemon-reload
-    echo -e "${GREEN}✅ Uninstallation Complete.${NC}"
-    read -p "Press Enter..."
+    echo ""
+    echo -e "${GREEN}✅ Uninstallation Complete. RsTunnel has been removed.${NC}"
+    read -p "   Press Enter to exit..."
+    exit 0
 }
 
-# --- Main Loop ---
+# --- Main Menu Loop ---
 
 check_root
 while true; do
-    show_banner
-    detect_service
-    echo -e "   System Status: $STATUS"
-    echo ""
-    echo "   1) Install Server (Iran/Bridge)"
-    echo "   2) Install Client (Kharej/Upstream)"
-    echo "   3) Service Management (Logs/Start/Stop)"
-    echo "   4) Update Core (Force Rebuild)"
-    echo "   5) Uninstall (Remove Everything)"
-    echo "   0) Exit"
+    header
+    echo -e "   ${BOLD}1)${NC} Create New Bridge (Server)"
+    echo -e "   ${BOLD}2)${NC} Create New Upstream (Client)"
+    echo -e "   ${BOLD}3)${NC} Manage / Delete Tunnels"
+    echo -e "   ${BOLD}4)${NC} Force Update Core"
+    echo -e "   ${BOLD}5)${NC} ${RED}Uninstall Script & Tunnels${NC}"
+    echo -e "   ${BOLD}0)${NC} Exit"
     echo ""
     read -p "   Select Option: " OPT
     
     case $OPT in
         1) install_server ;;
         2) install_client ;;
-        3) manage_service ;;
-        4) update_core; read -p "Press Enter..." ;;
+        3) manage_tunnels ;;
+        4) 
+           rm -f $BIN_DIR/rstunnel-* update_core
+           read -p "   Update Complete. Press Enter..." 
+           ;;
         5) uninstall_all ;;
-        0) exit 0 ;;
+        0) echo "Bye!"; exit 0 ;;
         *) echo "Invalid Option"; sleep 1 ;;
     esac
 done
