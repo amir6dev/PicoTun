@@ -1,50 +1,110 @@
 #!/bin/bash
 
-set -e
+# ======================================================
+#   PicoTun — Full Auto Installer (Dagger-Style)
+#   Author: amir6dev
+#   Binary: picotun
+#   Service: picotun
+# ======================================================
 
-REPO="amir6dev/RsHttpMux"
-BINARY_NAME="rshttpmux"
+REPO="amir6dev/PicoTun"
+BINARY="picotun"
+SERVICE="picotun"
 INSTALL_DIR="/usr/local/bin"
-SERVICE_NAME="rshttpmux.service"
-CONFIG_DIR="/etc/rshttpmux"
+CONFIG_DIR="/etc/picotun"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
+SYSTEMD_FILE="/etc/systemd/system/$SERVICE.service"
+GREEN="\e[92m"; RED="\e[91m"; CYAN="\e[96m"; YELLOW="\e[93m"; NC="\e[0m"
 
-echo ">>> Installing dependencies..."
-apt update -y
-apt install -y wget curl unzip tar jq
+clear
 
-mkdir -p "$CONFIG_DIR"
+logo() {
+cat <<EOF
+${CYAN}
+██████╗ ██╗ ██████╗ ██████╗  ██████╗ ████████╗██╗   ██╗███╗   ██╗
+██╔══██╗██║██╔════╝ ██╔══██╗██╔═══██╗╚══██╔══╝██║   ██║████╗  ██║
+██████╔╝██║██║  ███╗██████╔╝██║   ██║   ██║   ██║   ██║██╔██╗ ██║
+██╔═══╝ ██║██║   ██║██╔══██╗██║   ██║   ██║   ██║   ██║██║╚██╗██║
+██║     ██║╚██████╔╝██║  ██║╚██████╔╝   ██║   ╚██████╔╝██║ ╚████║
+╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═╝  ╚═══╝
+${NC}
+             ${YELLOW}PicoTun HTTPMUX Tunnel — Installer${NC}
+EOF
+}
 
-echo ">>> Fetching latest release..."
-LATEST_URL=$(curl -s https://api.github.com/repos/$REPO/releases/latest | jq -r '.assets[] | select(.name | contains("linux_amd64")) | .browser_download_url')
+pause() {
+  read -p "Press enter to continue..."
+}
 
-if [ -z "$LATEST_URL" ]; then
-    echo "Could not find latest release asset."
+install_dependencies() {
+  echo -e "${GREEN}Installing dependencies...${NC}"
+  apt update -y
+  apt install -y wget curl tar jq unzip
+}
+
+fetch_latest_release() {
+  echo -e "${GREEN}Fetching latest release...${NC}"
+  URL=$(curl -s https://api.github.com/repos/$REPO/releases/latest \
+    | jq -r '.assets[] | select(.name | contains("linux_amd64")) | .browser_download_url')
+
+  if [[ -z "$URL" ]]; then
+    echo -e "${RED}Error: No release found.${NC}"
     exit 1
-fi
+  fi
 
-echo ">>> Downloading binary..."
-wget -O /tmp/$BINARY_NAME.tar.gz "$LATEST_URL"
+  echo -e "${CYAN}Downloading binary...${NC}"
+  wget -O /tmp/$BINARY.tar.gz "$URL"
+  tar -xzf /tmp/$BINARY.tar.gz -C /tmp
+  chmod +x /tmp/$BINARY
+  mv /tmp/$BINARY $INSTALL_DIR/$BINARY
+}
 
-echo ">>> Extracting..."
-tar -xzf /tmp/$BINARY_NAME.tar.gz -C /tmp
-
-chmod +x /tmp/$BINARY_NAME
-mv /tmp/$BINARY_NAME "$INSTALL_DIR/$BINARY_NAME"
-
-echo ">>> Creating default config..."
+generate_config_server() {
+  mkdir -p $CONFIG_DIR
 
 cat > $CONFIG_FILE <<EOF
 mode: server
-bind: 0.0.0.0:8080
+listen: 0.0.0.0:8080
 session_timeout: 15
 
 mimic:
   fake_domain: www.google.com
   fake_path: /search
-  user_agent: Mozilla/5.0
+  user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
   custom_headers:
-    - "Accept-Language: en-US"
+    - "Accept-Language: en-US,en;q=0.9"
+  session_cookie: true
+
+obfs:
+  enabled: true
+  min_padding: 8
+  max_padding: 32
+  min_delay: 0
+  max_delay: 0
+
+forward:
+  tcp:
+    - "1412->127.0.0.1:1412"
+  udp: []
+EOF
+
+  echo -e "${GREEN}Server config generated: $CONFIG_FILE${NC}"
+}
+
+generate_config_client() {
+  mkdir -p $CONFIG_DIR
+
+cat > $CONFIG_FILE <<EOF
+mode: client
+server_url: http://SERVER_IP:8080/tunnel
+session_id: mysession
+
+mimic:
+  fake_domain: www.google.com
+  fake_path: /search
+  user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)
+  custom_headers:
+    - "Accept-Language: en-US,en;q=0.9"
   session_cookie: true
 
 obfs:
@@ -54,15 +114,17 @@ obfs:
 
 EOF
 
-echo ">>> Creating systemd service..."
+  echo -e "${GREEN}Client config generated: $CONFIG_FILE${NC}"
+}
 
-cat > /etc/systemd/system/$SERVICE_NAME <<EOF
+install_service() {
+cat > $SYSTEMD_FILE <<EOF
 [Unit]
-Description=RsHttpMux Tunnel Service
+Description=PicoTun HTTPMUX Tunnel
 After=network.target
 
 [Service]
-ExecStart=$INSTALL_DIR/$BINARY_NAME -config $CONFIG_FILE
+ExecStart=$INSTALL_DIR/$BINARY -config $CONFIG_FILE
 Restart=always
 LimitNOFILE=1000000
 
@@ -70,13 +132,77 @@ LimitNOFILE=1000000
 WantedBy=multi-user.target
 EOF
 
-echo ">>> Reloading systemd..."
-systemctl daemon-reload
+  systemctl daemon-reload
+  systemctl enable $SERVICE
+  systemctl restart $SERVICE
 
-echo ">>> Enabling service..."
-systemctl enable $SERVICE_NAME
-systemctl restart $SERVICE_NAME
+  echo -e "${GREEN}Service installed & running.${NC}"
+}
 
-echo ">>> Installation completed!"
-echo "Service running: systemctl status $SERVICE_NAME"
-echo "Config file: $CONFIG_FILE"
+uninstall_service() {
+  systemctl stop $SERVICE
+  systemctl disable $SERVICE
+  rm -f $SYSTEMD_FILE
+  systemctl daemon-reload
+  echo -e "${YELLOW}Service removed.${NC}"
+}
+
+show_logs() {
+  journalctl -u $SERVICE -f --no-pager
+}
+
+menu() {
+  clear
+  logo
+echo -e "${CYAN}
+1) Install Server
+2) Install Client
+3) View Logs
+4) Restart Service
+5) Remove Service
+6) Update PicoTun
+0) Exit
+${NC}"
+read -p "Select option: " opt
+
+case $opt in
+  1)
+    install_dependencies
+    fetch_latest_release
+    generate_config_server
+    install_service
+    ;;
+  2)
+    install_dependencies
+    fetch_latest_release
+    generate_config_client
+    install_service
+    ;;
+  3)
+    show_logs
+    ;;
+  4)
+    systemctl restart $SERVICE
+    echo -e "${GREEN}Service restarted.${NC}"
+    ;;
+  5)
+    uninstall_service
+    ;;
+  6)
+    uninstall_service
+    fetch_latest_release
+    install_service
+    ;;
+  0)
+    exit
+    ;;
+  *)
+    echo "Invalid option"
+    ;;
+esac
+
+pause
+menu
+}
+
+menu
