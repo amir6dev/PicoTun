@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"strings"
 	"time"
@@ -16,23 +17,23 @@ var (
 	listenAddr = flag.String("l", ":443", "Tunnel Port")
 	userAddr   = flag.String("u", ":1432", "User Port")
 	mode       = flag.String("m", "httpmux", "Mode: httpmux/httpsmux")
-	profile    = flag.String("profile", "balanced", "Profile: balanced/aggressive/gaming")
+	profile    = flag.String("profile", "balanced", "Profile")
 	certFile   = flag.String("cert", "", "Cert File")
 	keyFile    = flag.String("key", "", "Key File")
-	fakeHost   = flag.String("h", "www.google.com", "Fake Host")
+	fakeHost   = flag.String("host", "www.google.com", "Fake Host")
+	fakePath   = flag.String("path", "/search", "Fake Path")
 )
 
 var globalSession *smux.Session
 
 func main() {
 	flag.Parse()
-	fmt.Printf("🔥 Bridge Core Running | Mode: %s | Profile: %s\n", *mode, *profile)
+	fmt.Printf("🔥 Bridge Started | Mode: %s | Profile: %s\n", *mode, *profile)
 
 	smuxConfig := getSmuxConfig(*profile)
 	var listener net.Listener
 	var err error
 
-	// انتخاب حالت (HTTP یا HTTPS)
 	if *mode == "httpsmux" {
 		if *certFile == "" || *keyFile == "" {
 			panic("❌ Cert/Key required for httpsmux")
@@ -43,10 +44,8 @@ func main() {
 	} else {
 		listener, err = net.Listen("tcp", *listenAddr)
 	}
-
 	if err != nil { panic(err) }
 
-	// مدیریت اتصال سرور خارج
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -55,7 +54,6 @@ func main() {
 		}
 	}()
 
-	// مدیریت اتصال کاربر
 	userListener, err := net.Listen("tcp", *userAddr)
 	if err != nil { panic(err) }
 
@@ -77,16 +75,23 @@ func main() {
 
 func handleHandshake(conn net.Conn, config *smux.Config) {
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
-	buf := make([]byte, 1024)
+	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
 	if err != nil { conn.Close(); return }
-	
-	if !strings.Contains(string(buf[:n]), *fakeHost) {
+
+	reqData := string(buf[:n])
+	if !strings.Contains(reqData, *fakeHost) {
 		conn.Close()
 		return
 	}
 
-	conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"))
+	header := fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+		"Date: %s\r\n"+
+		"Content-Type: text/html\r\n"+
+		"Transfer-Encoding: chunked\r\n"+
+		"Server: gws\r\n\r\n", time.Now().Format(time.RFC1123))
+	
+	conn.Write([]byte(header))
 	conn.SetDeadline(time.Time{})
 
 	sess, err := smux.Client(conn, config)

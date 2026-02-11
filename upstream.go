@@ -14,14 +14,15 @@ import (
 var (
 	bridgeAddr = flag.String("c", "127.0.0.1:443", "Bridge Address")
 	panelAddr  = flag.String("p", "127.0.0.1:1432", "Panel Address")
-	mode       = flag.String("m", "httpmux", "Mode")
+	mode       = flag.String("m", "httpsmux", "Mode")
 	profile    = flag.String("profile", "balanced", "Profile")
-	fakeHost   = flag.String("h", "www.google.com", "Fake Host")
+	fakeHost   = flag.String("host", "www.google.com", "Fake Host")
+	fakePath   = flag.String("path", "/search", "Fake Path")
 )
 
 func main() {
 	flag.Parse()
-	fmt.Printf("🌍 Upstream Core Running | Target: %s | Mode: %s\n", *bridgeAddr, *mode)
+	fmt.Printf("🌍 Upstream Started | Target: %s\n", *bridgeAddr)
 	config := getSmuxConfig(*profile)
 
 	for {
@@ -41,7 +42,7 @@ func connect(config *smux.Config) {
 	}
 	if err != nil { return }
 
-	req := fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUser-Agent: Chrome\r\n\r\n", *fakeHost)
+	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\n\r\n", *fakePath, *fakeHost)
 	conn.Write([]byte(req))
 
 	buf := make([]byte, 1024)
@@ -74,6 +75,8 @@ func getSmuxConfig(p string) *smux.Config {
 		c.MaxReceiveBuffer = 16 * 1024 * 1024
 	case "gaming":
 		c.KeepAliveInterval = 1 * time.Second
+	default:
+		c.KeepAliveInterval = 10 * time.Second
 	}
 	return c
 }
