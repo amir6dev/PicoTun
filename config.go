@@ -1,37 +1,26 @@
 package main
 
-import (
-	"os"
-	"gopkg.in/yaml.v3"
-)
-
 type Config struct {
-	Mode      string            `yaml:"mode"` // server, client
-	Listen    string            `yaml:"listen,omitempty"` // for server
-	Transport string            `yaml:"transport,omitempty"`
+	Mode      string            `yaml:"mode"`
+	Listen    string            `yaml:"listen"`
+	Transport string            `yaml:"transport"`
 	PSK       string            `yaml:"psk"`
 	Profile   string            `yaml:"profile"`
 	Verbose   bool              `yaml:"verbose"`
+	CertFile  string            `yaml:"cert_file"`
+	KeyFile   string            `yaml:"key_file"`
 	
-	// Server Specific
-	Maps []PortMap `yaml:"maps,omitempty"`
+	Maps      []PortMap         `yaml:"maps"`
+	Paths     []PathConfig      `yaml:"paths"`
 	
-	// Client Specific
-	Paths []PathConfig `yaml:"paths,omitempty"`
-
-	// Common
 	Obfuscation ObfuscationConfig `yaml:"obfuscation"`
 	HttpMimic   HttpMimicConfig   `yaml:"http_mimic"`
 	Smux        SmuxConfig        `yaml:"smux"`
 	Advanced    AdvancedConfig    `yaml:"advanced"`
-	
-	// TLS
-	CertFile string `yaml:"cert_file,omitempty"`
-	KeyFile  string `yaml:"key_file,omitempty"`
 }
 
 type PortMap struct {
-	Type   string `yaml:"type"` // tcp, udp
+	Type   string `yaml:"type"`
 	Bind   string `yaml:"bind"`
 	Target string `yaml:"target"`
 }
@@ -77,14 +66,4 @@ type AdvancedConfig struct {
 	TcpReadBuffer   int  `yaml:"tcp_read_buffer"`
 	TcpWriteBuffer  int  `yaml:"tcp_write_buffer"`
 	ConnectionTimeout int `yaml:"connection_timeout"`
-}
-
-func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var cfg Config
-	err = yaml.Unmarshal(data, &cfg)
-	return &cfg, err
 }
