@@ -18,10 +18,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// --- Config Structures (Matching Dagger YAML) ---
+// --- Config Structures (Matching Dagger YAML Structure) ---
 
 type Config struct {
-	Mode        string            `yaml:"mode"` // server, client
+	Mode        string            `yaml:"mode"`
 	Listen      string            `yaml:"listen,omitempty"`
 	Transport   string            `yaml:"transport,omitempty"`
 	PSK         string            `yaml:"psk"`
@@ -30,12 +30,13 @@ type Config struct {
 	CertFile    string            `yaml:"cert_file,omitempty"`
 	KeyFile     string            `yaml:"key_file,omitempty"`
 	
-	Maps        []PortMap         `yaml:"maps,omitempty"`   // Server Side Maps
-	Paths       []PathConfig      `yaml:"paths,omitempty"`  // Client Side Paths
+	Maps        []PortMap         `yaml:"maps,omitempty"`
+	Paths       []PathConfig      `yaml:"paths,omitempty"`
 	
 	Obfuscation ObfuscationConfig `yaml:"obfuscation"`
 	HttpMimic   HttpMimicConfig   `yaml:"http_mimic"`
 	Smux        SmuxConfig        `yaml:"smux"`
+	Advanced    AdvancedConfig    `yaml:"advanced"`
 }
 
 type PortMap struct {
@@ -58,6 +59,8 @@ type ObfuscationConfig struct {
 	MinPadding  int     `yaml:"min_padding"`
 	MaxPadding  int     `yaml:"max_padding"`
 	MinDelayMs  int     `yaml:"min_delay_ms"`
+	MaxDelayMs  int     `yaml:"max_delay_ms"`
+	BurstChance float64 `yaml:"burst_chance"`
 }
 
 type HttpMimicConfig struct {
@@ -73,10 +76,20 @@ type SmuxConfig struct {
 	KeepAlive int `yaml:"keepalive"`
 	MaxRecv   int `yaml:"max_recv"`
 	MaxStream int `yaml:"max_stream"`
+	FrameSize int `yaml:"frame_size"`
+	Version   int `yaml:"version"`
+}
+
+type AdvancedConfig struct {
+	TcpNoDelay      bool `yaml:"tcp_nodelay"`
+	TcpKeepAlive    int  `yaml:"tcp_keepalive"`
+	TcpReadBuffer   int  `yaml:"tcp_read_buffer"`
+	TcpWriteBuffer  int  `yaml:"tcp_write_buffer"`
+	MaxConnections  int  `yaml:"max_connections"`
 }
 
 var (
-	configPath    = flag.String("c", "/etc/DaggerConnect/config.yaml", "Path to config")
+	configPath    = flag.String("c", "/etc/DaggerConnect/config.yaml", "Path to config file")
 	globalSession *smux.Session
 	sessionMutex  sync.Mutex
 )
@@ -84,15 +97,14 @@ var (
 func main() {
 	flag.Parse()
 	
-	// Load Config
 	data, err := os.ReadFile(*configPath)
 	if err != nil { log.Fatalf("❌ Config Load Error: %v", err) }
 	
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil { log.Fatalf("❌ YAML Error: %v", err) }
+	if err := yaml.Unmarshal(data, &cfg); err != nil { log.Fatalf("❌ YAML Parse Error: %v", err) }
 
 	if cfg.Verbose {
-		log.Printf("🔥 DaggerConnect Core | Mode: %s | Transport: %s", cfg.Mode, cfg.Transport)
+		log.Printf("🔥 DaggerConnect Started | Mode: %s | Profile: %s", cfg.Mode, cfg.Profile)
 	}
 
 	if cfg.Mode == "server" {
@@ -102,10 +114,32 @@ func main() {
 	}
 }
 
-// ================= SERVER LOGIC (Reverse Tunnel) =================
+// ================= HELPERS =================
+
+func applyAdvancedTCP(conn net.Conn, adv *AdvancedConfig) {
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(adv.TcpNoDelay)
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(time.Duration(adv.TcpKeepAlive) * time.Second)
+		if adv.TcpReadBuffer > 0 { tcpConn.SetReadBuffer(adv.TcpReadBuffer) }
+		if adv.TcpWriteBuffer > 0 { tcpConn.SetWriteBuffer(adv.TcpWriteBuffer) }
+	}
+}
+
+func getSmuxConfig(s *SmuxConfig) *smux.Config {
+	conf := smux.DefaultConfig()
+	if s.KeepAlive > 0 { conf.KeepAliveInterval = time.Duration(s.KeepAlive) * time.Second }
+	if s.MaxRecv > 0 { conf.MaxReceiveBuffer = s.MaxRecv }
+	if s.MaxStream > 0 { conf.MaxStreamBuffer = s.MaxStream }
+	if s.FrameSize > 0 { conf.MaxFrameSize = s.FrameSize }
+	if s.Version > 0 { conf.Version = s.Version }
+	return conf
+}
+
+// ================= SERVER =================
 
 func runServer(cfg *Config) {
-	// 1. Listen for Incoming Tunnel Connections
+	// 1. Listen for Tunnel
 	go func() {
 		var ln net.Listener
 		var err error
@@ -117,33 +151,39 @@ func runServer(cfg *Config) {
 		} else {
 			ln, err = net.Listen("tcp", cfg.Listen)
 		}
-		
 		if err != nil { log.Fatalf("Listen Error: %v", err) }
-		if cfg.Verbose { log.Printf("✅ Tunnel Listening on %s", cfg.Listen) }
+		if cfg.Verbose { log.Printf("✅ Tunnel Listening on %s (%s)", cfg.Listen, cfg.Transport) }
 
 		for {
 			conn, err := ln.Accept()
 			if err != nil { continue }
-			go handleServerHandshake(conn, cfg)
+			
+			// Apply Advanced TCP settings
+			applyAdvancedTCP(conn, &cfg.Advanced)
+			
+			go handleServerTunnel(conn, cfg)
 		}
 	}()
 
-	// 2. Start Port Mappings (Reverse Forwarding)
-	// Server listens on 'bind', sends data through tunnel to Client, Client dials 'target'
+	// 2. Start Port Mappings
 	for _, m := range cfg.Maps {
-		go startServerListener(m)
+		go startServerMapping(m, cfg)
 	}
 
-	select {} // Keep running
+	select {}
 }
 
-func handleServerHandshake(conn net.Conn, cfg *Config) {
-	// Obfuscation Delay
-	if cfg.Obfuscation.Enabled && cfg.Obfuscation.MinDelayMs > 0 {
-		time.Sleep(time.Duration(cfg.Obfuscation.MinDelayMs) * time.Millisecond)
+func handleServerTunnel(conn net.Conn, cfg *Config) {
+	// Obfuscation: Initial Delay
+	if cfg.Obfuscation.Enabled {
+		delay := cfg.Obfuscation.MinDelayMs
+		if cfg.Obfuscation.MaxDelayMs > cfg.Obfuscation.MinDelayMs {
+			delay += rand.Intn(cfg.Obfuscation.MaxDelayMs - cfg.Obfuscation.MinDelayMs)
+		}
+		if delay > 0 { time.Sleep(time.Duration(delay) * time.Millisecond) }
 	}
 
-	// HTTP Mimicry Validation
+	// HTTP Mimicry
 	if cfg.Transport == "httpmux" || cfg.Transport == "httpsmux" {
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		br := bufio.NewReader(conn)
@@ -155,29 +195,29 @@ func handleServerHandshake(conn net.Conn, cfg *Config) {
 			conn.Close(); return
 		}
 
-		// Send Fake 200 OK
+		// Fake Response
 		resp := "HTTP/1.1 200 OK\r\nServer: nginx\r\nDate: " + time.Now().Format(time.RFC1123) + "\r\n"
 		if cfg.HttpMimic.SessionCookie { resp += fmt.Sprintf("Set-Cookie: SID=%d; Path=/; Secure\r\n", rand.Int63()) }
+		if cfg.HttpMimic.ChunkedEncoding { resp += "Transfer-Encoding: chunked\r\n" }
 		resp += "\r\n"
 		conn.Write([]byte(resp))
 		conn.SetReadDeadline(time.Time{})
 	}
 
-	// Upgrade to SMUX
-	smuxConf := smux.DefaultConfig()
+	// SMUX Session
+	smuxConf := getSmuxConfig(&cfg.Smux)
 	session, err := smux.Server(conn, smuxConf)
 	if err != nil { return }
 
-	// Store Session (Single Client Assumption for simplicity, or last wins)
 	sessionMutex.Lock()
 	if globalSession != nil { globalSession.Close() }
 	globalSession = session
 	sessionMutex.Unlock()
-	
+
 	if cfg.Verbose { log.Println("🔌 Tunnel Established") }
 }
 
-func startServerListener(m PortMap) {
+func startServerMapping(m PortMap, cfg *Config) {
 	l, err := net.Listen(m.Type, m.Bind)
 	if err != nil {
 		log.Printf("❌ Map Bind Error %s: %v", m.Bind, err)
@@ -188,6 +228,8 @@ func startServerListener(m PortMap) {
 	for {
 		userConn, err := l.Accept()
 		if err != nil { continue }
+		
+		applyAdvancedTCP(userConn, &cfg.Advanced)
 
 		go func(uConn net.Conn) {
 			defer uConn.Close()
@@ -197,12 +239,11 @@ func startServerListener(m PortMap) {
 
 			if sess == nil || sess.IsClosed() { return }
 
-			// Open stream inside tunnel
 			stream, err := sess.OpenStream()
 			if err != nil { return }
 			defer stream.Close()
 
-			// PROTOCOL: Send Target Address Length + Address
+			// PROTOCOL: Target Address
 			targetBytes := []byte(m.Target)
 			stream.Write([]byte{byte(len(targetBytes))})
 			stream.Write(targetBytes)
@@ -212,20 +253,19 @@ func startServerListener(m PortMap) {
 	}
 }
 
-// ================= CLIENT LOGIC =================
+// ================= CLIENT =================
 
 func runClient(cfg *Config) {
 	for _, path := range cfg.Paths {
 		for i := 0; i < path.ConnectionPool; i++ {
-			go maintainClientConnection(path, cfg)
+			go maintainPath(path, cfg)
 		}
 	}
 	select {}
 }
 
-func maintainClientConnection(path PathConfig, cfg *Config) {
+func maintainPath(path PathConfig, cfg *Config) {
 	for {
-		// 1. Dial Server
 		var conn net.Conn
 		var err error
 		d := net.Dialer{Timeout: time.Duration(path.DialTimeout) * time.Second}
@@ -241,7 +281,9 @@ func maintainClientConnection(path PathConfig, cfg *Config) {
 			continue
 		}
 
-		// 2. HTTP Mimicry Handshake
+		applyAdvancedTCP(conn, &cfg.Advanced)
+
+		// HTTP Mimicry Request
 		if path.Transport == "httpmux" || path.Transport == "httpsmux" {
 			req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n", 
 				cfg.HttpMimic.FakePath, cfg.HttpMimic.FakeDomain, cfg.HttpMimic.UserAgent)
@@ -250,29 +292,27 @@ func maintainClientConnection(path PathConfig, cfg *Config) {
 			conn.Write([]byte(req))
 
 			buf := make([]byte, 1024)
-			conn.Read(buf) // Read 200 OK
+			conn.Read(buf)
 		}
 
-		// 3. Start SMUX Client
-		session, err := smux.Client(conn, smux.DefaultConfig())
+		smuxConf := getSmuxConfig(&cfg.Smux)
+		session, err := smux.Client(conn, smuxConf)
 		if err != nil { conn.Close(); continue }
 
 		if cfg.Verbose { log.Printf("✅ Connected to %s", path.Addr) }
 
-		// 4. Accept Reverse Streams
 		for {
 			stream, err := session.AcceptStream()
 			if err != nil { break }
-			go handleReverseStream(stream)
+			go handleClientStream(stream, cfg)
 		}
 		session.Close()
 	}
 }
 
-func handleReverseStream(stream net.Conn) {
+func handleClientStream(stream net.Conn, cfg *Config) {
 	defer stream.Close()
 
-	// Read Target Length & Address
 	lenBuf := make([]byte, 1)
 	if _, err := stream.Read(lenBuf); err != nil { return }
 	targetLen := int(lenBuf[0])
@@ -281,10 +321,11 @@ func handleReverseStream(stream net.Conn) {
 	if _, err := io.ReadFull(stream, targetBuf); err != nil { return }
 	targetAddr := string(targetBuf)
 
-	// Dial Local Target
 	targetConn, err := net.Dial("tcp", targetAddr)
 	if err != nil { return }
 	defer targetConn.Close()
+	
+	applyAdvancedTCP(targetConn, &cfg.Advanced)
 
 	pipe(stream, targetConn)
 }
