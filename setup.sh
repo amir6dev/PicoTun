@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =========================
-# PicoTun Manager (Full Automation)
+# PicoTun Installer (Auto-Build)
 # =========================
 REPO_DEFAULT="amir6dev/RsTunnel"
 BINARY_NAME="picotun"
@@ -19,58 +19,59 @@ YELLOW='\033[1;33m'
 BLUE='\033[1;34m'
 CYAN='\033[1;36m'
 
-# --- Helpers ---
-print_header() {
-    clear
-    echo -e "${CYAN}===============================================${NC}"
-    echo -e "${GREEN}      🚀 PicoTun Tunnel Manager (Pro)      ${NC}"
-    echo -e "${CYAN}===============================================${NC}"
-    echo ""
-}
-
 print_msg() { echo -e "${BLUE}➤ $1${NC}"; }
 print_ok() { echo -e "${GREEN}✔ $1${NC}"; }
 print_err() { echo -e "${RED}✖ $1${NC}"; }
 
 need_root() {
     if [[ "${EUID}" -ne 0 ]]; then
-        print_err "Run as root!"
+        print_err "Please run as root!"
         exit 1
     fi
 }
 
-# --- Core Logic ---
+# --- Core Installation Logic ---
 install_core() {
     print_msg "Checking environment..."
     apt-get update -qq >/dev/null
     apt-get install -y curl git golang openssl >/dev/null
 
-    print_msg "Cloning & Building..."
+    print_msg "Cloning source code..."
     rm -rf /tmp/picobuild
+    # دانلود کل ریپوزیتوری
     git clone "https://github.com/${REPO_DEFAULT}.git" /tmp/picobuild
-    cd /tmp/picobuild || exit
     
-    # ✅ FIX: حل مشکل go.sum و وابستگی‌ها
-    if [ -f "PicoTun/go.mod" ]; then
-        cd PicoTun
-        print_msg "Resolving dependencies (go mod tidy)..."
-        go mod tidy
-        cd ..
-    elif [ -f "go.mod" ]; then
-        print_msg "Resolving dependencies (go mod tidy)..."
-        go mod tidy
-    fi
-    
-    # Build Correct Path
-    TARGET=""
-    if [ -f "cmd/picotun/main.go" ]; then TARGET="cmd/picotun/main.go"; fi
-    if [ -f "PicoTun/cmd/picotun/main.go" ]; then TARGET="PicoTun/cmd/picotun/main.go"; fi
-    
-    if [ -z "$TARGET" ]; then
-        print_err "Could not find main.go!"
+    if [ ! -d "/tmp/picobuild" ]; then
+        print_err "Failed to clone repository!"
         exit 1
     fi
 
+    cd /tmp/picobuild || exit
+
+    # تشخیص پوشه پروژه (اگر فایل‌ها داخل PicoTun باشند)
+    if [ -d "PicoTun" ]; then
+        cd PicoTun
+    fi
+
+    # حل مشکل وابستگی‌ها
+    if [ -f "go.mod" ]; then
+        print_msg "Resolving dependencies (go mod tidy)..."
+        go mod tidy
+    fi
+
+    # پیدا کردن مسیر فایل اصلی برای بیلد
+    TARGET=""
+    if [ -f "cmd/picotun/main.go" ]; then TARGET="cmd/picotun/main.go"; fi
+    if [ -f "main.go" ]; then TARGET="main.go"; fi
+    
+    if [ -z "$TARGET" ]; then
+        print_err "Could not find main.go to build!"
+        echo "Current dir files:"
+        ls -R
+        exit 1
+    fi
+
+    print_msg "Building PicoTun..."
     CGO_ENABLED=0 go build -o picotun "$TARGET"
     
     if [ -f "picotun" ]; then
@@ -84,6 +85,7 @@ install_core() {
     fi
 }
 
+# --- Configuration Wizard ---
 configure_wizard() {
     MODE=$1
     mkdir -p "$CONFIG_DIR"
@@ -94,7 +96,6 @@ configure_wizard() {
     if [[ -z "$PSK" ]]; then PSK=$(openssl rand -hex 16); echo "Generated: $PSK"; fi
     
     if [[ "$MODE" == "server" ]]; then
-        # Port Mapping Wizard
         TCP_MAPS=""
         echo -e "${YELLOW}Port Forwarding (Reverse Tunnel):${NC}"
         while true; do
@@ -139,14 +140,13 @@ forward:
   tcp: []
 EOF
     fi
-    
     install_service
 }
 
 install_service() {
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=PicoTun
+Description=PicoTun Service
 After=network.target
 
 [Service]
@@ -162,56 +162,51 @@ EOF
     systemctl daemon-reload
     systemctl enable picotun >/dev/null 2>&1
     systemctl restart picotun
-    print_ok "Service Restarted"
+    print_ok "Service Started!"
 }
 
+# --- Service Management ---
 manage_menu() {
     while true; do
-        print_header
-        echo -e "${YELLOW}:: Service Management ::${NC}"
-        echo "1) Start Service"
-        echo "2) Stop Service"
-        echo "3) Restart Service"
-        echo "4) View Logs (Live)"
-        echo "5) View Config"
-        echo "6) Delete Config & Service"
+        echo -e "\n${YELLOW}:: Service Management ::${NC}"
+        echo "1) Start"
+        echo "2) Stop"
+        echo "3) Restart"
+        echo "4) Logs"
+        echo "5) Uninstall"
         echo "0) Back"
-        echo ""
         read -p "Select: " opt
         case $opt in
-            1) systemctl start picotun; print_ok "Started"; sleep 1 ;;
-            2) systemctl stop picotun; print_ok "Stopped"; sleep 1 ;;
-            3) systemctl restart picotun; print_ok "Restarted"; sleep 1 ;;
+            1) systemctl start picotun; print_ok "Started" ;;
+            2) systemctl stop picotun; print_ok "Stopped" ;;
+            3) systemctl restart picotun; print_ok "Restarted" ;;
             4) journalctl -u picotun -f ;;
-            5) cat $CONFIG_FILE; read -p "Press Enter..." ;;
-            6) uninstall_all; return ;;
+            5) uninstall_all; return ;;
             0) return ;;
         esac
     done
 }
 
 uninstall_all() {
-    echo ""
-    read -p "Are you sure you want to DELETE everything? (y/N): " yn
-    if [[ "$yn" =~ ^[Yy] ]]; then
-        print_msg "Uninstalling..."
-        systemctl stop picotun >/dev/null 2>&1 || true
-        systemctl disable picotun >/dev/null 2>&1 || true
-        rm -f "$SERVICE_FILE" "$INSTALL_DIR/$BINARY_NAME"
-        rm -rf "$CONFIG_DIR"
-        systemctl daemon-reload
-        print_ok "Uninstalled completely."
-        sleep 2
-    fi
+    print_msg "Uninstalling..."
+    systemctl stop picotun >/dev/null 2>&1 || true
+    systemctl disable picotun >/dev/null 2>&1 || true
+    rm -f "$SERVICE_FILE" "$INSTALL_DIR/$BINARY_NAME"
+    rm -rf "$CONFIG_DIR"
+    systemctl daemon-reload
+    print_ok "Uninstalled."
 }
 
+# --- Main Menu ---
 main_menu() {
+    need_root
     while true; do
         print_header
+        echo -e "${CYAN}   PicoTun Setup Manager   ${NC}"
         echo "1) Install / Update Core"
-        echo "2) Install Server (Iran)"
-        echo "3) Install Client (Kharej)"
-        echo "4) Settings (Manage Service)"
+        echo "2) Configure Server"
+        echo "3) Configure Client"
+        echo "4) Manage Service"
         echo "5) Uninstall"
         echo "0) Exit"
         echo ""
@@ -227,5 +222,4 @@ main_menu() {
     done
 }
 
-need_root
 main_menu
