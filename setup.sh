@@ -19,10 +19,9 @@ REPO_URL="https://github.com/amir6dev/RsTunnel.git"
 APP_NAME="picotun"
 INSTALL_DIR="/usr/local/bin"
 BIN_PATH="${INSTALL_DIR}/${APP_NAME}"
-CONFIG_DIR="/etc/picotun" # Changed to picotun to avoid conflict, code handles it
+CONFIG_DIR="/etc/picotun"
 SYSTEMD_DIR="/etc/systemd/system"
 BUILD_DIR="/tmp/picobuild"
-GO_PATH="/usr/local/go/bin"
 
 # ----------------------------------------------------------------------------
 # Helper Functions
@@ -82,8 +81,8 @@ install_go() {
     # Check if Go is already installed
     if command -v go &> /dev/null; then
         local GO_VERSION=$(go version | grep -oE "go[0-9]+\.[0-9]+")
-        # Simple check: if version contains 1.22 or 1.23, strictly speaking we might want newer but let's assume valid
-        if [[ "$GO_VERSION" == *"1.2"* ]] || [[ "$GO_VERSION" == *"1.3"* ]]; then
+        # Check if version is 1.22 or higher (simple check)
+        if [[ "$GO_VERSION" == *"1.22"* ]] || [[ "$GO_VERSION" == *"1.23"* ]] || [[ "$GO_VERSION" == *"1.24"* ]]; then
              echo -e "${GREEN}✓ Go environment ready ($GO_VERSION).${NC}"
              return
         fi
@@ -111,7 +110,7 @@ update_core() {
     
     # Ensure PATH is correct
     export PATH=$PATH:/usr/local/go/bin
-    export GOPROXY=https://goproxy.cn,direct # China proxy works well for Iran usually
+    export GOPROXY=https://goproxy.cn,direct
     export GOSUMDB=off
 
     echo -e "${YELLOW}⬇️  Preparing source code...${NC}"
@@ -126,7 +125,8 @@ update_core() {
         return
     fi
     
-    cd "$BUILD_DIR"
+    cd "$BUILD_DIR" || { echo -e "${RED}✖ Failed to enter build dir${NC}"; return; }
+    
     echo -e "${YELLOW}🔧 Fixing build environment (Iran Safe)...${NC}"
     
     # Initialize module cleanly to fix dependency errors
@@ -139,7 +139,7 @@ update_core() {
     go mod tidy
     
     echo -e "${YELLOW}🔨 Building binary...${NC}"
-    # Build the server/client binary (assuming main is in cmd/picotun based on your provided file list)
+    # Build the server/client binary
     if [ -d "cmd/picotun" ]; then
         go build -trimpath -ldflags="-s -w" -o picotun ./cmd/picotun
     else
@@ -148,7 +148,7 @@ update_core() {
     fi
     
     if [ ! -f "picotun" ]; then
-        echo -e "${RED}✖ Build failed.${NC}"
+        echo -e "${RED}✖ Build failed. Binary not created.${NC}"
         return
     fi
     
@@ -210,8 +210,6 @@ install_server() {
     echo "  6) tcpmux    - Simple TCP"
     read -p "Choice [1-6]: " TRANS_CHOICE
     
-    # RsTunnel currently mainly supports httpmux, but we map it for config compatibility
-    # Your code maps config.Transport to logic.
     case $TRANS_CHOICE in
         1) TRANSPORT="httpsmux" ;;
         2) TRANSPORT="httpmux" ;;
@@ -237,8 +235,6 @@ install_server() {
         read -p "Protocol (tcp/udp/both) [tcp]: " PROTO
         PROTO=${PROTO:-tcp}
         
-        # Build YAML entry for RsTunnel (Dagger Style)
-        # Assuming RsTunnel reads 'maps' array in config
         MAPS_YAML="${MAPS_YAML}  - type: ${PROTO}\n    bind: \"0.0.0.0:${BIND_PORT}\"\n    target: \"127.0.0.1:${TARGET_PORT}\"\n"
         
         echo -e "${GREEN}✓ Mapping added: 0.0.0.0:${BIND_PORT} → 127.0.0.1:${TARGET_PORT} (${PROTO})${NC}"
