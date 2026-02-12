@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =========================
-# PicoTun Manager (Full Automation)
+# PicoTun Ultimate Installer
 # =========================
 REPO_DEFAULT="amir6dev/RsTunnel"
 BINARY_NAME="picotun"
@@ -19,11 +19,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[1;34m'
 CYAN='\033[1;36m'
 
-# --- Helper Functions ---
+# --- Helper Functions (تعریف شده در بالا برای جلوگیری از ارور) ---
 print_header() {
     clear
     echo -e "${CYAN}===============================================${NC}"
-    echo -e "${GREEN}      🚀 PicoTun Tunnel Manager (Pro)      ${NC}"
+    echo -e "${GREEN}      🚀 PicoTun Tunnel Manager (Auto)     ${NC}"
     echo -e "${CYAN}===============================================${NC}"
     echo ""
 }
@@ -39,36 +39,67 @@ need_root() {
     fi
 }
 
-# --- Core Logic ---
-install_core() {
-    print_msg "Checking environment..."
-    apt-get update -qq >/dev/null
-    apt-get install -y curl git golang openssl >/dev/null
+# --- 1. Force Install Go ---
+install_go() {
+    print_msg "Checking Go version..."
+    
+    force_install() {
+        echo -e "${YELLOW}⬇️  Installing Go 1.22 (Force Update)...${NC}"
+        rm -rf /usr/local/go
+        rm -f /usr/bin/go
+        
+        wget -q https://go.dev/dl/go1.22.0.linux-amd64.tar.gz -O go.tar.gz
+        tar -C /usr/local -xzf go.tar.gz
+        rm go.tar.gz
+        
+        ln -sf /usr/local/go/bin/go /usr/bin/go
+        export PATH=$PATH:/usr/local/go/bin
+    }
 
+    if ! command -v go &> /dev/null; then
+        force_install
+    else
+        VER=$(go version | awk '{print $3}' | tr -d "go")
+        if [[ "$VER" != 1.2* ]]; then
+            force_install
+        else
+            print_ok "Go version is OK: $VER"
+        fi
+    fi
+}
+
+# --- 2. Build Core ---
+install_core() {
+    install_go
+    
     print_msg "Cloning source code..."
     rm -rf /tmp/picobuild
     git clone "https://github.com/${REPO_DEFAULT}.git" /tmp/picobuild
     cd /tmp/picobuild || exit
     
-    # حل مشکل وابستگی‌ها
-    if [ -f "go.mod" ]; then
-        print_msg "Resolving dependencies (go mod tidy)..."
-        go mod tidy
-    fi
+    # ورود به پوشه پروژه اگر در ساب‌فولدر باشد
+    if [ -d "PicoTun" ]; then cd PicoTun; fi
+
+    print_msg "Fixing dependencies..."
+    # حذف فایل‌های مزاحم قبلی برای بیلد تمیز
+    rm -f go.mod go.sum
     
-    # پیدا کردن مسیر فایل اصلی برای بیلد
+    # ساخت مجدد ماژول برای جلوگیری از ارور مسیر
+    go mod init github.com/amir6dev/rstunnel
+    go mod tidy
+    
+    # پیدا کردن مسیر main.go
     TARGET=""
     if [ -f "cmd/picotun/main.go" ]; then TARGET="cmd/picotun/main.go"; fi
-    if [ -f "PicoTun/cmd/picotun/main.go" ]; then TARGET="PicoTun/cmd/picotun/main.go"; fi
     if [ -f "main.go" ]; then TARGET="main.go"; fi
     
     if [ -z "$TARGET" ]; then
-        print_err "Could not find main.go to build!"
+        print_err "Could not find main.go!"
         ls -R
         exit 1
     fi
 
-    print_msg "Building PicoTun..."
+    print_msg "Building Binary..."
     CGO_ENABLED=0 go build -o picotun "$TARGET"
     
     if [ -f "picotun" ]; then
@@ -82,6 +113,7 @@ install_core() {
     fi
 }
 
+# --- Configuration Wizard ---
 configure_wizard() {
     MODE=$1
     mkdir -p "$CONFIG_DIR"
@@ -163,15 +195,13 @@ EOF
 
 manage_menu() {
     while true; do
-        print_header
-        echo -e "${YELLOW}:: Service Management ::${NC}"
+        echo -e "\n${YELLOW}:: Service Management ::${NC}"
         echo "1) Start"
         echo "2) Stop"
         echo "3) Restart"
         echo "4) Logs"
         echo "5) Uninstall"
         echo "0) Back"
-        echo ""
         read -p "Select: " opt
         case $opt in
             1) systemctl start picotun; print_ok "Started" ;;
@@ -194,10 +224,12 @@ uninstall_all() {
     print_ok "Uninstalled."
 }
 
+# --- Main Menu ---
 main_menu() {
+    need_root
     while true; do
         print_header
-        echo "1) Install / Update Core"
+        echo "1) Install / Update Core (Auto-Fix)"
         echo "2) Configure Server"
         echo "3) Configure Client"
         echo "4) Manage Service"
@@ -216,5 +248,4 @@ main_menu() {
     done
 }
 
-need_root
 main_menu

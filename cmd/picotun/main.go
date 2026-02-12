@@ -4,9 +4,8 @@ import (
 	"flag"
 	"log"
 	"net/http"
-	"strings"
-
-	// ✅ فیکس: مسیر دقیق پکیج
+	
+	// ✅ مسیر صحیح پکیج
 	"github.com/amir6dev/rstunnel/PicoTun"
 )
 
