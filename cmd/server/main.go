@@ -36,6 +36,17 @@ func main() {
 		go srv.StartReverseTCP(bind, target)
 	}
 
+	
+	// Reverse UDP listeners
+	for _, m := range cfg.Forward.UDP {
+		bind, target, ok := splitMap(m)
+		if !ok {
+			log.Printf("invalid udp map: %q (expected bind->target or port->target)", m)
+			continue
+		}
+		go srv.StartReverseUDP(bind, target)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/tunnel", srv.HandleHTTP)
 

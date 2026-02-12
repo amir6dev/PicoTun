@@ -3,6 +3,7 @@ package httpmux
 import (
 	"bytes"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -108,20 +109,41 @@ func (s *Server) handleFrame(sess *Session, fr *Frame) {
 		default:
 		}
 	case FrameData:
+		// 1) TCP reverse links
 		serverLinksMu.Lock()
 		link := serverLinks[fr.StreamID]
 		serverLinksMu.Unlock()
 		if link != nil {
-			link.c.Write(fr.Payload)
+			_, _ = link.c.Write(fr.Payload)
+			return
+		}
+
+		// 2) UDP reverse links
+		serverUDPLinksMu.Lock()
+		ul := serverUDPLinks[fr.StreamID]
+		serverUDPLinksMu.Unlock()
+		if ul != nil && ul.ln != nil && ul.peer != nil {
+			_, _ = ul.ln.WriteToUDP(fr.Payload, ul.peer)
 		}
 	case FrameClose:
+		// TCP
 		serverLinksMu.Lock()
 		link := serverLinks[fr.StreamID]
 		delete(serverLinks, fr.StreamID)
 		serverLinksMu.Unlock()
 		if link != nil {
-			link.c.Close()
+			_ = link.c.Close()
+			return
 		}
+
+		// UDP
+		serverUDPLinksMu.Lock()
+		ul := serverUDPLinks[fr.StreamID]
+		if ul != nil && ul.ln != nil && ul.peer != nil {
+			delete(serverUDPKeyToID, ul.ln.LocalAddr().String()+"|"+ul.peer.String())
+		}
+		delete(serverUDPLinks, fr.StreamID)
+		serverUDPLinksMu.Unlock()
 	}
 }
 

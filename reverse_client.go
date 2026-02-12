@@ -3,6 +3,7 @@ package httpmux
 import (
 	"log"
 	"net"
+	"strings"
 	"sync"
 )
 
@@ -55,9 +56,21 @@ func (cr *ClientReverse) Run() {
 }
 
 func (cr *ClientReverse) open(streamID uint32, target string) {
-	c, err := net.Dial("tcp", target)
+	network := "tcp"
+	addr := target
+
+	// scheme-aware (tcp://, udp://) but backward compatible (no scheme => tcp)
+	if strings.HasPrefix(target, "udp://") {
+		network = "udp"
+		addr = strings.TrimPrefix(target, "udp://")
+	} else if strings.HasPrefix(target, "tcp://") {
+		network = "tcp"
+		addr = strings.TrimPrefix(target, "tcp://")
+	}
+
+	c, err := net.Dial(network, addr)
 	if err != nil {
-		log.Printf("dial target failed %s: %v", target, err)
+		log.Printf("dial target failed %s (%s): %v", addr, network, err)
 		_ = cr.tr.Send(&Frame{StreamID: streamID, Type: FrameClose})
 		return
 	}
@@ -67,7 +80,7 @@ func (cr *ClientReverse) open(streamID uint32, target string) {
 	cr.mu.Unlock()
 
 	// read from target -> send to server
-	buf := make([]byte, 2048)
+	buf := make([]byte, 65535)
 	for {
 		n, err := c.Read(buf)
 		if n > 0 {
