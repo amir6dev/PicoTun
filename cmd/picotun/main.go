@@ -4,9 +4,10 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
-	httpmux "github.com/amir6dev/RsTunnel/PicoTun"
+	httpmux "github.com/amir6dev/rstunnel/PicoTun"
 )
 
 func main() {
@@ -18,7 +19,7 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	switch cfg.Mode {
+	switch strings.ToLower(strings.TrimSpace(cfg.Mode)) {
 	case "server":
 		if cfg.Listen == "" {
 			cfg.Listen = "0.0.0.0:1010"
@@ -39,10 +40,30 @@ func main() {
 			go srv.StartReverseTCP(bind, target)
 		}
 
-		mux := http.NewServeMux()
-		mux.HandleFunc("/tunnel", srv.HandleHTTP)
+		// Reverse UDP listeners from config
+		for _, m := range cfg.Forward.UDP {
+			bind, target, ok := httpmux.SplitMap(m)
+			if !ok {
+				log.Printf("invalid udp map: %q", m)
+				continue
+			}
+			go srv.StartReverseUDP(bind, target)
+		}
 
-		log.Printf("server running on %s (endpoint /tunnel)", cfg.Listen)
+		// Use mimic.fake_path as tunnel endpoint (Dagger-style)
+		tunnelPath := strings.TrimSpace(cfg.Mimic.FakePath)
+		if tunnelPath == "" {
+			tunnelPath = "/tunnel"
+		}
+		if !strings.HasPrefix(tunnelPath, "/") {
+			tunnelPath = "/" + tunnelPath
+		}
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("/tunnel", srv.HandleHTTP) // backward compatibility
+		mux.HandleFunc(tunnelPath, srv.HandleHTTP)
+
+		log.Printf("server running on %s (endpoint %s)", cfg.Listen, tunnelPath)
 		log.Fatal(http.ListenAndServe(cfg.Listen, mux))
 
 	case "client":

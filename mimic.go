@@ -11,6 +11,7 @@ type MimicConfig struct {
 	UserAgent     string   `yaml:"user_agent"`
 	CustomHeaders []string `yaml:"custom_headers"`
 	SessionCookie bool     `yaml:"session_cookie"`
+	Chunked       bool     `yaml:"chunked"`
 }
 
 func ApplyMimicHeaders(req *http.Request, cfg *MimicConfig, sessionID string) {

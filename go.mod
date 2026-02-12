@@ -1,3 +1,3 @@
-module github.com/amir6dev/RsTunnel/PicoTun
+module github.com/amir6dev/rstunnel/PicoTun
 
-go 1.21
+go 1.22

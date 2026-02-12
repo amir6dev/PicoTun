@@ -53,16 +53,31 @@ pause() { read -r -p "Press Enter to continue..."; }
 #  CORE INSTALLATION (Iran Optimized & Retry Logic)
 # ----------------------------------------------------------------------------
 ensure_deps() {
-    echo -e "${YELLOW}📦 Installing dependencies...${NC}"
-    if command -v apt &>/dev/null; then
-        apt-get update -qq >/dev/null
-        apt-get install -y curl wget git tar openssl iproute2 >/dev/null 2>&1
-    elif command -v yum &>/dev/null; then
-        yum install -y curl wget git tar openssl iproute2 >/dev/null 2>&1
-    else
-        echo "Unsupported package manager. Please install dependencies manually."
-    fi
-    ok "Dependencies installed"
+	local NEED_INSTALL=0
+	local MISSING=()
+	for c in curl wget git tar openssl ip; do
+		if ! command -v "$c" >/dev/null 2>&1; then
+			NEED_INSTALL=1
+			MISSING+=("$c")
+		fi
+	done
+
+	if [[ $NEED_INSTALL -eq 0 ]]; then
+		ok "Dependencies already installed"
+		return 0
+	fi
+
+	echo -e "${YELLOW}📦 Installing dependencies...${NC}"
+	warn "Missing: ${MISSING[*]}"
+	if command -v apt-get &>/dev/null; then
+		apt-get update -qq >/dev/null
+		apt-get install -y curl wget git tar openssl iproute2 >/dev/null 2>&1 || die "Failed to install dependencies"
+	elif command -v yum &>/dev/null; then
+		yum install -y curl wget git tar openssl iproute2 >/dev/null 2>&1 || die "Failed to install dependencies"
+	else
+		die "Unsupported package manager. Install curl/wget/git/tar/openssl/iproute2 manually."
+	fi
+	ok "Dependencies installed"
 }
 
 install_go() {
@@ -128,15 +143,17 @@ update_core() {
         die "Failed to clone repository."
     fi
 
-    cd "$BUILD_DIR"
-    echo -e "${YELLOW}🔧 Fixing build environment (Iran Safe)...${NC}"
+	cd "$BUILD_DIR"
+	echo -e "${YELLOW}🔧 Fixing build environment (Iran Safe)...${NC}"
 
-    rm -f go.mod go.sum
-    go mod init github.com/amir6dev/rstunnel >/dev/null 2>&1 || true
+	# Keep project's go.mod (do NOT delete it). Only normalize module/import casing.
+	if [[ -f go.mod ]]; then
+		sed -i 's|^module github.com/amir6dev/RsTunnel/PicoTun$|module github.com/amir6dev/rstunnel/PicoTun|g' go.mod || true
+	fi
 
-    # Fix imports
-    find . -name "*.go" -type f -exec sed -i 's|github.com/amir6dev/RsTunnel/PicoTun|github.com/amir6dev/rstunnel/PicoTun|g' {} +
-    find . -name "*.go" -type f -exec sed -i 's|github.com/amir6dev/RsTunnel|github.com/amir6dev/rstunnel|g' {} +
+	# Fix imports (GitHub repo is case-insensitive, but Go modules are case-sensitive)
+	find . -name "*.go" -type f -exec sed -i 's|github.com/amir6dev/RsTunnel/PicoTun|github.com/amir6dev/rstunnel/PicoTun|g' {} +
+	find . -name "*.go" -type f -exec sed -i 's|github.com/amir6dev/RsTunnel|github.com/amir6dev/rstunnel|g' {} +
 
     echo -e "${YELLOW}📦 Downloading Libraries...${NC}"
     go_get_retry "golang.org/x/net@v0.23.0" || die "Failed to download x/net"
@@ -146,13 +163,12 @@ update_core() {
     
     go mod tidy >/dev/null 2>&1
 
-    echo -e "${YELLOW}🔨 Building binary...${NC}"
-    local TARGET=""
-    if [[ -f "cmd/picotun/main.go" ]]; then TARGET="cmd/picotun/main.go"; fi
-    if [[ -f "main.go" ]]; then TARGET="main.go"; fi
-    [[ -z "$TARGET" ]] && die "Main file not found."
-
-    CGO_ENABLED=0 go build -o picotun "$TARGET" || die "Build failed."
+	echo -e "${YELLOW}🔨 Building binary...${NC}"
+	if [[ -d "cmd/picotun" ]]; then
+		CGO_ENABLED=0 go build -trimpath -o picotun ./cmd/picotun || die "Build failed."
+	else
+		CGO_ENABLED=0 go build -trimpath -o picotun ./cmd/picotun/main.go || die "Build failed."
+	fi
     install -m 0755 picotun "${BIN_PATH}"
     ok "Core updated successfully: ${BIN_PATH}"
 
@@ -242,6 +258,9 @@ ask_mimic() {
 
     read -r -p "Enable Session Cookie header? [Y/n]: " SESSION_COOKIE
     if [[ "${SESSION_COOKIE}" =~ ^[Nn] ]]; then SESSION_COOKIE_BOOL="false"; else SESSION_COOKIE_BOOL="true"; fi
+
+	read -r -p "Enable Chunked Transfer-Encoding (hide body size)? [y/N]: " CHUNKED_TE
+	if [[ "${CHUNKED_TE}" =~ ^[Yy] ]]; then CHUNKED_BOOL="true"; else CHUNKED_BOOL="false"; fi
 
     CUSTOM_HEADERS_YAML=""
     echo ""
@@ -402,6 +421,7 @@ mimic:
   fake_path: "${FAKE_PATH}"
   user_agent: "${USER_AGENT}"
   session_cookie: ${SESSION_COOKIE_BOOL}
+  chunked: ${CHUNKED_BOOL}
 ${CUSTOM_HEADERS_BLOCK}
 
 obfs:
@@ -439,6 +459,7 @@ mimic:
   fake_path: "${FAKE_PATH}"
   user_agent: "${USER_AGENT}"
   session_cookie: ${SESSION_COOKIE_BOOL}
+  chunked: ${CHUNKED_BOOL}
 ${CUSTOM_HEADERS_BLOCK}
 
 obfs:

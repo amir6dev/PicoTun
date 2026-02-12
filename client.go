@@ -4,6 +4,8 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -15,6 +17,11 @@ type Client struct {
 }
 
 func NewClient(serverURL, sessionID string, mimic *MimicConfig, obfs *ObfsConfig, psk string) *Client {
+	if mimic == nil {
+		mimic = &MimicConfig{}
+	}
+	serverURL = normalizeServerURL(serverURL, mimic)
+
 	pool := 3
 	conns := make([]*HTTPConn, pool)
 
@@ -74,4 +81,29 @@ func NewClient(serverURL, sessionID string, mimic *MimicConfig, obfs *ObfsConfig
 
 	_ = mt.Start()
 	return &Client{Transport: mt}
+}
+
+// normalizeServerURL ensures the URL has a path (Dagger-style).
+// If user passes only "http(s)://host:port" we will append mimic.fake_path (default: /tunnel).
+func normalizeServerURL(raw string, mimic *MimicConfig) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	path := strings.TrimSpace(u.Path)
+	if path == "" || path == "/" {
+		tunnelPath := strings.TrimSpace(mimic.FakePath)
+		if tunnelPath == "" {
+			tunnelPath = "/tunnel"
+		}
+		if !strings.HasPrefix(tunnelPath, "/") {
+			tunnelPath = "/" + tunnelPath
+		}
+		u.Path = tunnelPath
+	}
+	return u.String()
 }

