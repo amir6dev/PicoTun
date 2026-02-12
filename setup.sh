@@ -161,8 +161,12 @@ update_core() {
     fi
 
     echo -e "${YELLOW}📦 Downloading Libraries...${NC}"
+<<<<<<< HEAD
     go mod download || true
 go mod tidy || true
+=======
+    go mod tidy >/dev/null 2>&1 || true
+>>>>>>> 0a8b9b7f677cc17f8b3a8dc8a67dae851680d624
     go mod download >/dev/null 2>&1 || true
 
     echo -e "${YELLOW}🔨 Building binary...${NC}"
