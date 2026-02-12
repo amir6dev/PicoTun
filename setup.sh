@@ -3,7 +3,6 @@ set -euo pipefail
 
 # ========= UI =========
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
-# Fix: Added spaces inside braces to prevent syntax errors
 say() { echo -e "${CYAN}➤${NC} $*"; }
 ok()  { echo -e "${GREEN}✓${NC} $*"; }
 warn(){ echo -e "${YELLOW}⚠${NC} $*"; }
@@ -39,7 +38,7 @@ ensure_deps(){
   ok "Dependencies installed"
 }
 
-# New: Install stable Go version to fix 404 errors
+# --- Install Go (Fixed for IRAN) ---
 install_go(){
   if command -v go >/dev/null 2>&1; then
     # Check if version is > 1.21
@@ -48,15 +47,23 @@ install_go(){
     fi
   fi
   
-  say "Installing Go 1.22.1..."
-  local url="https://go.dev/dl/go1.22.1.linux-amd64.tar.gz"
+  # استفاده از میرور Aliyun برای عبور از تحریم‌های گوگل در سرور ایران
+  local GO_VER="1.22.1"
+  say "Installing Go ${GO_VER} (from Mirror)..."
+  
+  # لینک میرور (Aliyun) که در ایران باز است
+  local url="https://mirrors.aliyun.com/golang/go${GO_VER}.linux-amd64.tar.gz"
+  
   rm -rf /usr/local/go
   if ! curl -fsSL -L "$url" -o /tmp/go.tgz; then
-     die "Download failed. Check internet."
+     die "Download failed from mirror. Check internet connection."
   fi
+  
   tar -C /usr/local -xzf /tmp/go.tgz
   rm -f /tmp/go.tgz
   export PATH="/usr/local/go/bin:${PATH}"
+  
+  ok "Go installed successfully."
 }
 
 banner(){
@@ -66,7 +73,7 @@ banner(){
   echo ""
 }
 
-# ========= Build Core (Replaces Download) =========
+# ========= Build Core =========
 update_core() {
   ensure_deps
   install_go
@@ -76,7 +83,6 @@ update_core() {
   git clone --depth 1 "$REPO_URL" "$BUILD_DIR" >/dev/null
   
   say "Building binary..."
-  # Handle nested directory if needed
   if [[ -d "${BUILD_DIR}/PicoTun" ]]; then
      cd "${BUILD_DIR}/PicoTun"
   else
@@ -88,7 +94,6 @@ update_core() {
   go mod init github.com/amir6dev/rstunnel
   go mod tidy
   
-  # Find main
   local TARGET=""
   if [[ -f "cmd/picotun/main.go" ]]; then TARGET="cmd/picotun/main.go"; fi
   if [[ -f "main.go" ]]; then TARGET="main.go"; fi

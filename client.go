@@ -19,26 +19,26 @@ func NewClient(serverURL, sessionID string, mimic *MimicConfig, obfs *ObfsConfig
 	conns := make([]*HTTPConn, pool)
 
 	for i := 0; i < pool; i++ {
-		// تنظیم ترنسپورت اختصاصی برای uTLS
+		// کانفیگ اختصاصی uTLS برای شبیه‌سازی مرورگر
 		tr := &http.Transport{
 			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				// 1. اتصال TCP ساده
+				// 1. اتصال TCP معمولی
 				rawConn, err := net.DialTimeout(network, addr, 10*time.Second)
 				if err != nil {
 					return nil, err
 				}
 
-				// 2. تعیین SNI (نام دامنه برای هندشیک)
+				// 2. تعیین SNI
 				serverName := mimic.FakeDomain
 				if serverName == "" {
 					host, _, _ := net.SplitHostPort(addr)
 					serverName = host
 				}
 
-				// 3. استفاده از uTLS برای شبیه‌سازی Chrome 120
+				// 3. هندشیک با uTLS (Chrome 120)
 				uConn := utls.UClient(rawConn, &utls.Config{
 					ServerName:         serverName,
-					InsecureSkipVerify: true, // برای سرتیفیکیت‌های Self-signed
+					InsecureSkipVerify: true, // برای سرتیفیکیت‌های خودامضا
 				}, utls.HelloChrome_120)
 
 				if err := uConn.Handshake(); err != nil {
@@ -47,9 +47,10 @@ func NewClient(serverURL, sessionID string, mimic *MimicConfig, obfs *ObfsConfig
 				}
 				return uConn, nil
 			},
-			ForceAttemptHTTP2: true,
+			ForceAttemptHTTP2: true, // اجبار به HTTP/2 برای شباهت بیشتر
 		}
 
+		// تنظیم HTTP2 روی Transport
 		_ = http2.ConfigureTransport(tr)
 
 		conns[i] = &HTTPConn{
@@ -68,7 +69,7 @@ func NewClient(serverURL, sessionID string, mimic *MimicConfig, obfs *ObfsConfig
 	mt := NewHTTPMuxTransport(conns, HTTPMuxConfig{
 		FlushInterval: 200 * time.Millisecond,
 		MaxBatch:      64,
-		IdlePoll:      250 * time.Millisecond, // Long-polling idle check
+		IdlePoll:      250 * time.Millisecond,
 	})
 
 	_ = mt.Start()
