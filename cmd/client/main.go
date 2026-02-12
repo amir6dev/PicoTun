@@ -30,36 +30,57 @@ func main() {
 	}
 
 	// Prefer Dagger-style paths (multi-path). Fallback to server_url.
+<<<<<<< HEAD
 	var paths []httpmux.PathConfig
 	if len(cfg.Paths) > 0 {
 		paths = cfg.Paths
+=======
+	var path httpmux.PathConfig
+	if len(cfg.Paths) > 0 {
+		path = cfg.Paths[0]
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 	} else {
 		// legacy mode: server_url must be provided
 		if strings.TrimSpace(cfg.ServerURL) == "" {
 			log.Fatal("client config requires either 'paths:' (recommended) or 'server_url:'")
 		}
 		// Convert legacy server_url into a path
+<<<<<<< HEAD
 		paths = append(paths, httpmux.PathConfig{
+=======
+		path = httpmux.PathConfig{
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 			Transport:      "httpmux",
 			Addr:           cfg.ServerURL, // buildServerURL handles full URL too
 			ConnectionPool: 2,
 			AggressivePool: true,
 			RetryInterval:  3,
 			DialTimeout:    10,
+<<<<<<< HEAD
 		})
 	}
 
 	cl := httpmux.NewClientFromPaths(paths, cfg.SessionID, &cfg.Mimic, &cfg.Obfs, cfg.PSK)
+=======
+		}
+	}
+
+	cl := httpmux.NewClientFromPath(path, cfg.SessionID, &cfg.Mimic, &cfg.Obfs, cfg.PSK)
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 
 	// Reverse runner: handles FrameOpen/FrameData/FrameClose
 	rev := httpmux.NewClientReverse(cl.Transport)
 	go rev.Run()
 
+<<<<<<< HEAD
 	if len(paths) > 0 {
 		log.Printf("client started. paths=%d first_transport=%s first_addr=%s session_id=%s", len(paths), paths[0].Transport, paths[0].Addr, cfg.SessionID)
 	} else {
 		log.Printf("client started. (no paths?) session_id=%s", cfg.SessionID)
 	}
+=======
+	log.Printf("client started. transport=%s addr=%s session_id=%s", path.Transport, path.Addr, cfg.SessionID)
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 
 	for {
 		time.Sleep(60 * time.Second)

@@ -83,21 +83,33 @@ func main() {
 			cfg.SessionID = "sess-default"
 		}
 
+<<<<<<< HEAD
 		// Prefer Dagger-style paths (multi-path)
 		var paths []httpmux.PathConfig
 		if len(cfg.Paths) > 0 {
 			paths = cfg.Paths
+=======
+		// Prefer Dagger-style paths
+		var path httpmux.PathConfig
+		if len(cfg.Paths) > 0 {
+			path = cfg.Paths[0]
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 		} else {
 			if strings.TrimSpace(cfg.ServerURL) == "" {
 				log.Fatal("client requires either 'paths:' or 'server_url:'")
 			}
+<<<<<<< HEAD
 			paths = append(paths, httpmux.PathConfig{
+=======
+			path = httpmux.PathConfig{
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 				Transport:      "httpmux",
 				Addr:           cfg.ServerURL,
 				ConnectionPool: 2,
 				AggressivePool: true,
 				RetryInterval:  3,
 				DialTimeout:    10,
+<<<<<<< HEAD
 			})
 		}
 
@@ -110,6 +122,16 @@ func main() {
 		} else {
 			log.Printf("client started. (no paths?) session_id=%s", cfg.SessionID)
 		}
+=======
+			}
+		}
+
+		cl := httpmux.NewClientFromPath(path, cfg.SessionID, &cfg.Mimic, &cfg.Obfs, cfg.PSK)
+		rev := httpmux.NewClientReverse(cl.Transport)
+		go rev.Run()
+
+		log.Printf("client started. transport=%s addr=%s session_id=%s", path.Transport, path.Addr, cfg.SessionID)
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 		for {
 			time.Sleep(60 * time.Second)
 		}

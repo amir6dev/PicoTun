@@ -16,6 +16,7 @@ type Client struct {
 	Transport *HTTPMuxTransport
 }
 
+<<<<<<< HEAD
 // NewClientFromPaths creates a client based on one or more Dagger-like path configs.
 // It builds a shared mux transport over ALL paths (multi-path), so if one path is blocked,
 // others can keep the tunnel alive.
@@ -23,12 +24,19 @@ type Client struct {
 // - connection_pool is applied per-path
 // - retry_interval / aggressive_pool affect per-connection cooldown after failures
 func NewClientFromPaths(paths []PathConfig, sessionID string, mimic *MimicConfig, obfs *ObfsConfig, psk string) *Client {
+=======
+// NewClientFromPath creates a client based on a single Dagger-like path config.
+// For httpmux: plain HTTP (no TLS) + Host spoofing + mimic headers.
+// For httpsmux: TLS (uTLS) + HTTP/2.
+func NewClientFromPath(path PathConfig, sessionID string, mimic *MimicConfig, obfs *ObfsConfig, psk string) *Client {
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 	if mimic == nil {
 		mimic = &MimicConfig{}
 	}
 	if obfs == nil {
 		obfs = &ObfsConfig{}
 	}
+<<<<<<< HEAD
 
 	if len(paths) == 0 {
 		// safe fallback: create a single default path from mimic config (mostly for legacy server_url users)
@@ -120,6 +128,82 @@ func NewClientFromPaths(paths []PathConfig, sessionID string, mimic *MimicConfig
 				RetryInterval: retryInterval,
 				Aggressive:    path.AggressivePool,
 			})
+=======
+
+	transport := strings.ToLower(strings.TrimSpace(path.Transport))
+	addr := strings.TrimSpace(path.Addr)
+
+	// sensible defaults like Dagger
+	pool := path.ConnectionPool
+	if pool <= 0 {
+		pool = 2
+	}
+	dialTimeout := time.Duration(path.DialTimeout) * time.Second
+	if dialTimeout <= 0 {
+		dialTimeout = 10 * time.Second
+	}
+
+	serverURL := buildServerURL(transport, addr, mimic)
+
+	conns := make([]*HTTPConn, pool)
+	for i := 0; i < pool; i++ {
+		var tr *http.Transport
+
+		// httpmux: plain HTTP mimicry
+		if transport == "httpmux" || transport == "wsmux" || transport == "tcpmux" || transport == "" {
+			dialer := &net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}
+			tr = &http.Transport{
+				DialContext:           dialer.DialContext,
+				DisableCompression:    false,
+				ForceAttemptHTTP2:     false, // keep it HTTP/1.1-like
+				MaxIdleConns:          1024,
+				MaxIdleConnsPerHost:   256,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   dialTimeout,
+				ExpectContinueTimeout: 1 * time.Second,
+			}
+		} else {
+			// httpsmux / wssmux: TLS mimicry (uTLS) + HTTP/2
+			tr = &http.Transport{
+				DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					rawConn, err := net.DialTimeout(network, addr, dialTimeout)
+					if err != nil {
+						return nil, err
+					}
+
+					serverName := mimic.FakeDomain
+					if serverName == "" {
+						host, _, _ := net.SplitHostPort(addr)
+						serverName = host
+					}
+
+					uConn := utls.UClient(rawConn, &utls.Config{
+						ServerName:         serverName,
+						InsecureSkipVerify: true, // allow self-signed
+					}, utls.HelloChrome_120)
+
+					if err := uConn.Handshake(); err != nil {
+						_ = uConn.Close()
+						return nil, err
+					}
+					return uConn, nil
+				},
+				ForceAttemptHTTP2: true,
+			}
+			_ = http2.ConfigureTransport(tr)
+		}
+
+		conns[i] = &HTTPConn{
+			Client: &http.Client{
+				Transport: tr,
+				Timeout:   25 * time.Second,
+			},
+			Mimic:     mimic,
+			Obfs:      obfs,
+			PSK:       psk,
+			SessionID: sessionID,
+			ServerURL: serverURL,
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 		}
 	}
 
@@ -133,11 +217,14 @@ func NewClientFromPaths(paths []PathConfig, sessionID string, mimic *MimicConfig
 	return &Client{Transport: mt}
 }
 
+<<<<<<< HEAD
 // NewClientFromPath keeps compatibility with older code; it uses a single path.
 func NewClientFromPath(path PathConfig, sessionID string, mimic *MimicConfig, obfs *ObfsConfig, psk string) *Client {
 	return NewClientFromPaths([]PathConfig{path}, sessionID, mimic, obfs, psk)
 }
 
+=======
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
 func buildServerURL(transport, addr string, mimic *MimicConfig) string {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
