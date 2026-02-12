@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ========= Colors =========
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# ========= UI =========
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+say(){ echo -e "${CYAN}➤${NC} $*"; }
+ok(){  echo -e "${GREEN}✓${NC} $*"; }
+warn(){echo -e "${YELLOW}⚠${NC} $*"; }
+die(){ echo -e "${RED}✖${NC} $*"; exit 1; }
 
-# ========= Project Paths =========
-APP_NAME="picotun"
+# ========= Project =========
+OWNER="amir6dev"
+REPO="RsTunnel"
+APP="picotun"
 
 INSTALL_DIR="/usr/local/bin"
-BIN_PATH="${INSTALL_DIR}/${APP_NAME}"
+BIN_PATH="${INSTALL_DIR}/${APP}"
 
 CONFIG_DIR="/etc/picotun"
 SERVER_CFG="${CONFIG_DIR}/server.yaml"
@@ -22,138 +24,83 @@ SYSTEMD_DIR="/etc/systemd/system"
 SERVER_SVC="picotun-server"
 CLIENT_SVC="picotun-client"
 
-# Repo (your project)
-REPO_URL="https://github.com/amir6dev/RsTunnel.git"
-BUILD_DIR="/tmp/picobuild"
+# ========= Helpers =========
+need_root(){ [[ ${EUID} -eq 0 ]] || die "Run as root (sudo)."; }
 
-say() { echo -e "${CYAN}➤${NC} $*"; }
-ok()  { echo -e "${GREEN}✓${NC} $*"; }
-warn(){ echo -e "${YELLOW}⚠${NC} $*"; }
-die() { echo -e "${RED}✖${NC} $*"; exit 1; }
-
-show_banner() {
-  echo -e "${CYAN}"
-  echo -e "${GREEN}*** RsTunnel / PicoTun  ***${NC}"
-  echo -e "${CYAN}Repo: ${NC}${REPO_URL}"
-  echo -e "${CYAN}=================================${NC}"
-  echo ""
+arch() {
+  case "$(uname -m)" in
+    x86_64) echo "amd64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    *) die "Unsupported arch: $(uname -m)" ;;
+  esac
 }
 
-check_root() {
-  if [[ $EUID -ne 0 ]]; then
-    die "This script must be run as root (use sudo)."
-  fi
-}
-
-install_deps() {
-  say "Installing dependencies..."
-  if command -v apt &>/dev/null; then
-    apt update -qq
-    apt install -y git curl ca-certificates tar >/dev/null 2>&1
-  elif command -v yum &>/dev/null; then
-    yum install -y git curl ca-certificates tar >/dev/null 2>&1
+ensure_deps(){
+  say "Checking environment..."
+  if command -v apt >/dev/null 2>&1; then
+    apt-get update -y >/dev/null
+    apt-get install -y curl ca-certificates tar >/dev/null
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y curl ca-certificates tar >/dev/null
   else
-    die "Unsupported package manager (need apt or yum)."
+    die "No supported package manager (apt/yum). Install curl+tar manually."
   fi
   ok "Dependencies installed"
 }
 
-detect_arch() {
-  local arch
-  arch="$(uname -m)"
-  case "$arch" in
-    x86_64) echo "amd64" ;;
-    aarch64|arm64) echo "arm64" ;;
-    *) die "Unsupported arch: $arch" ;;
-  esac
+banner(){
+  echo -e "${GREEN}***  RsTunnel / PicoTun  ***${NC}"
+  echo -e "Repo: https://github.com/${OWNER}/${REPO}"
+  echo -e "================================="
+  echo ""
 }
 
-install_go_new() {
-  # Updated to Go 1.22.5 to avoid 404 errors with older versions
-  local GO_VERSION="1.22.5"
+# ========= Release Download =========
+github_api_latest() {
+  echo "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"
+}
 
-  if command -v go >/dev/null 2>&1; then
-    # Check if version is recent enough (1.21+)
-    if go version | grep -E "go1\.(2[1-9]|[3-9][0-9])"; then
-      ok "Go already installed: $(go version)"
-      return
-    fi
-    warn "Go exists but is old: $(go version)"
+get_latest_tag() {
+  # Extract "tag_name" from GitHub API JSON without jq
+  curl -fsSL "$(github_api_latest)" | awk -F'"' '/"tag_name":/ {print $4; exit}'
+}
+
+download_asset() {
+  local tag="$1"
+  local a; a="$(arch)"
+  local asset="picotun_linux_${a}.tar.gz"
+
+  # Prefer direct GitHub release asset URL:
+  local url="https://github.com/${OWNER}/${REPO}/releases/download/${tag}/${asset}"
+
+  say "Downloading ${asset} (${tag})..."
+  rm -rf /tmp/picotun_dl
+  mkdir -p /tmp/picotun_dl
+  if ! curl -fL "$url" -o "/tmp/picotun_dl/${asset}"; then
+    die "Failed to download asset. Ensure a release exists with ${asset} attached."
   fi
 
-  say "Installing Go ${GO_VERSION}..."
-  local arch url
-  arch="$(detect_arch)"
-  url="https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz"
-
-  rm -rf /usr/local/go
-  # Added -L to follow redirects if needed
-  if ! curl -fsSL "$url" -o /tmp/go.tgz; then
-     die "Failed to download Go from $url. Check internet connection."
-  fi
-  
-  tar -C /usr/local -xzf /tmp/go.tgz
-  rm -f /tmp/go.tgz
-
-  export PATH="/usr/local/go/bin:${PATH}"
-  
-  # Verify installation
-  if ! /usr/local/go/bin/go version >/dev/null 2>&1; then
-     die "Go installation failed."
-  fi
-  
-  ok "Go installed: $(/usr/local/go/bin/go version)"
+  say "Extracting..."
+  tar -xzf "/tmp/picotun_dl/${asset}" -C /tmp/picotun_dl
+  [[ -f "/tmp/picotun_dl/${APP}" ]] || die "Archive missing '${APP}' binary"
+  install -m 0755 "/tmp/picotun_dl/${APP}" "${BIN_PATH}"
+  ok "Installed binary: ${BIN_PATH}"
 }
 
-clone_repo() {
-  say "Cloning source code..."
-  rm -rf "$BUILD_DIR"
-  git clone --depth 1 "$REPO_URL" "$BUILD_DIR" >/dev/null
-  ok "Cloned to $BUILD_DIR"
+update_core() {
+  ensure_deps
+  local tag
+  tag="$(get_latest_tag)"
+  [[ -n "$tag" ]] || die "Could not detect latest release tag."
+  download_asset "$tag"
 }
 
-build_binary() {
-  say "Building ${APP_NAME} from source..."
+# ========= Config =========
+ensure_config_dir(){ mkdir -p "${CONFIG_DIR}"; }
 
-  export PATH="/usr/local/go/bin:${PATH}"
-  export GOPROXY=direct
-  export GOSUMDB=off
-
-  # Adjust build path based on repo structure
-  if [[ -d "${BUILD_DIR}/PicoTun" ]]; then
-    cd "${BUILD_DIR}/PicoTun"
-    /usr/local/go/bin/go mod tidy
-    CGO_ENABLED=0 /usr/local/go/bin/go build -o "${BUILD_DIR}/${APP_NAME}" ./cmd/picotun
-  else
-    cd "${BUILD_DIR}"
-    /usr/local/go/bin/go mod tidy
-    CGO_ENABLED=0 /usr/local/go/bin/go build -o "${BUILD_DIR}/${APP_NAME}" ./cmd/picotun
-  fi
-
-  if [[ ! -f "${BUILD_DIR}/${APP_NAME}" ]]; then
-      die "Build failed! Binary not found."
-  fi
-
-  ok "Build done: ${BUILD_DIR}/${APP_NAME}"
-}
-
-install_binary() {
-  say "Installing binary..."
-  install -m 0755 "${BUILD_DIR}/${APP_NAME}" "${BIN_PATH}"
-  ok "Installed: ${BIN_PATH}"
-}
-
-ensure_config_dir() {
-  mkdir -p "${CONFIG_DIR}"
-}
-
-write_default_server_config_if_missing() {
+write_default_server_config_if_missing(){
   ensure_config_dir
-  if [[ -f "${SERVER_CFG}" ]]; then
-    ok "Server config exists: ${SERVER_CFG}"
-    return
-  fi
-
+  [[ -f "${SERVER_CFG}" ]] && return
   cat > "${SERVER_CFG}" <<'YAML'
 mode: "server"
 listen: "0.0.0.0:1010"
@@ -179,17 +126,12 @@ forward:
     - "1412->127.0.0.1:1412"
   udp: []
 YAML
-
   ok "Created default server config: ${SERVER_CFG}"
 }
 
-write_default_client_config_if_missing() {
+write_default_client_config_if_missing(){
   ensure_config_dir
-  if [[ -f "${CLIENT_CFG}" ]]; then
-    ok "Client config exists: ${CLIENT_CFG}"
-    return
-  fi
-
+  [[ -f "${CLIENT_CFG}" ]] && return
   cat > "${CLIENT_CFG}" <<'YAML'
 mode: "client"
 server_url: "http://SERVER_IP:1010/tunnel"
@@ -211,24 +153,19 @@ obfs:
   max_delay: 25
   burst_chance: 0
 YAML
-
   ok "Created default client config: ${CLIENT_CFG}"
 }
 
-create_systemd_service() {
-  local mode="$1" # server|client
-  local svc cfg
-
+# ========= systemd =========
+create_service() {
+  local mode="$1" svc cfg
   if [[ "$mode" == "server" ]]; then
-    svc="${SERVER_SVC}"
-    cfg="${SERVER_CFG}"
+    svc="${SERVER_SVC}"; cfg="${SERVER_CFG}"
   else
-    svc="${CLIENT_SVC}"
-    cfg="${CLIENT_CFG}"
+    svc="${CLIENT_SVC}"; cfg="${CLIENT_CFG}"
   fi
 
   say "Creating systemd service: ${svc}"
-
   cat > "${SYSTEMD_DIR}/${svc}.service" <<EOF
 [Unit]
 Description=RsTunnel PicoTun (${mode})
@@ -253,58 +190,45 @@ EOF
   ok "Service created: ${svc}.service"
 }
 
-install_server_flow() {
-  show_banner
-  install_deps
-  install_go_new
-  clone_repo
-  build_binary
-  install_binary
-  write_default_server_config_if_missing
-  create_systemd_service "server"
+enable_start_service(){
+  local svc="$1"
+  systemctl enable --now "$svc" >/dev/null 2>&1 || true
+  ok "Started: $svc"
+}
 
-  systemctl enable --now "${SERVER_SVC}" >/dev/null 2>&1 || true
-  ok "Server installed + started"
-  echo ""
+# ========= Flows =========
+install_server(){
+  banner
+  update_core
+  write_default_server_config_if_missing
+  create_service "server"
+  enable_start_service "${SERVER_SVC}"
   systemctl status "${SERVER_SVC}" --no-pager || true
   echo ""
-  read -r -p "Press Enter to return..." _
+  read -r -p "Press Enter..." _
 }
 
-install_client_flow() {
-  show_banner
-  install_deps
-  install_go_new
-  clone_repo
-  build_binary
-  install_binary
+install_client(){
+  banner
+  update_core
   write_default_client_config_if_missing
-  create_systemd_service "client"
-
-  systemctl enable --now "${CLIENT_SVC}" >/dev/null 2>&1 || true
-  ok "Client installed + started"
-  echo ""
+  create_service "client"
+  enable_start_service "${CLIENT_SVC}"
   systemctl status "${CLIENT_SVC}" --no-pager || true
   echo ""
-  read -r -p "Press Enter to return..." _
+  read -r -p "Press Enter..." _
 }
 
-service_management() {
-  local mode="$1" # server|client
-  local svc cfg title
-
+manage_service(){
+  local mode="$1" svc cfg title
   if [[ "$mode" == "server" ]]; then
-    svc="${SERVER_SVC}"
-    cfg="${SERVER_CFG}"
-    title="SERVER MANAGEMENT"
+    svc="${SERVER_SVC}"; cfg="${SERVER_CFG}"; title="SERVER MANAGEMENT"
   else
-    svc="${CLIENT_SVC}"
-    cfg="${CLIENT_CFG}"
-    title="CLIENT MANAGEMENT"
+    svc="${CLIENT_SVC}"; cfg="${CLIENT_CFG}"; title="CLIENT MANAGEMENT"
   fi
 
   while true; do
-    show_banner
+    banner
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
     echo -e "${CYAN}         ${title}${NC}"
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
@@ -333,14 +257,7 @@ service_management() {
       5) journalctl -u "$svc" -f ;;
       6) systemctl enable "$svc" >/dev/null 2>&1 || true; ok "Auto-start enabled"; sleep 1 ;;
       7) systemctl disable "$svc" >/dev/null 2>&1 || true; ok "Auto-start disabled"; sleep 1 ;;
-      8)
-        if [[ -f "$cfg" ]]; then
-          cat "$cfg"
-        else
-          warn "Config not found: $cfg"
-        fi
-        read -r -p "Press Enter..." _
-        ;;
+      8) [[ -f "$cfg" ]] && cat "$cfg" || warn "Config not found: $cfg"; read -r -p "Press Enter..." _ ;;
       9)
         if [[ -f "$cfg" ]]; then
           ${EDITOR:-nano} "$cfg"
@@ -352,8 +269,7 @@ service_management() {
             sleep 1
           fi
         else
-          warn "Config not found: $cfg"
-          sleep 1
+          warn "Config not found: $cfg"; sleep 1
         fi
         ;;
       10)
@@ -374,9 +290,9 @@ service_management() {
   done
 }
 
-settings_menu() {
+settings_menu(){
   while true; do
-    show_banner
+    banner
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
     echo -e "${CYAN}            SETTINGS MENU${NC}"
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
@@ -388,16 +304,26 @@ settings_menu() {
     echo ""
     read -r -p "Select option: " c
     case "${c:-}" in
-      1) service_management "server" ;;
-      2) service_management "client" ;;
+      1) manage_service "server" ;;
+      2) manage_service "client" ;;
       0) break ;;
       *) warn "Invalid option"; sleep 1 ;;
     esac
   done
 }
 
-uninstall_all() {
-  show_banner
+show_logs_picker(){
+  banner
+  echo ""
+  echo "  1) Server logs"
+  echo "  2) Client logs"
+  read -r -p "Select: " l
+  if [[ "$l" == "1" ]]; then journalctl -u "${SERVER_SVC}" -f; fi
+  if [[ "$l" == "2" ]]; then journalctl -u "${CLIENT_SVC}" -f; fi
+}
+
+uninstall_all(){
+  banner
   echo -e "${RED}═══════════════════════════════════════${NC}"
   echo -e "${RED}        UNINSTALL RsTunnel / PicoTun${NC}"
   echo -e "${RED}═══════════════════════════════════════${NC}"
@@ -405,12 +331,10 @@ uninstall_all() {
   echo -e "${YELLOW}This will remove:${NC}"
   echo "  - Binary: ${BIN_PATH}"
   echo "  - Configs: ${CONFIG_DIR}"
-  echo "  - Systemd services: ${SERVER_SVC}, ${CLIENT_SVC}"
+  echo "  - Services: ${SERVER_SVC}, ${CLIENT_SVC}"
   echo ""
   read -r -p "Are you sure? [y/N]: " y
-  if [[ ! "$y" =~ ^[Yy]$ ]]; then
-    return
-  fi
+  [[ "$y" =~ ^[Yy]$ ]] || return
 
   say "Stopping and disabling services..."
   systemctl stop "${SERVER_SVC}" >/dev/null 2>&1 || true
@@ -431,9 +355,9 @@ uninstall_all() {
   exit 0
 }
 
-main_menu() {
+main_menu(){
   while true; do
-    show_banner
+    banner
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
     echo -e "${CYAN}            MAIN MENU${NC}"
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
@@ -442,30 +366,25 @@ main_menu() {
     echo "  2) Install Client"
     echo "  3) Settings (Manage Services & Configs)"
     echo "  4) Show Logs (Pick service)"
-    echo "  5) Uninstall (Remove everything)"
+    echo "  5) Update Core (Download latest release)"
+    echo "  6) Uninstall (Remove everything)"
     echo ""
     echo "  0) Exit"
     echo ""
     read -r -p "Select option: " c
 
     case "${c:-}" in
-      1) install_server_flow ;;
-      2) install_client_flow ;;
+      1) install_server ;;
+      2) install_client ;;
       3) settings_menu ;;
-      4)
-        echo ""
-        echo "  1) Server logs"
-        echo "  2) Client logs"
-        read -r -p "Select: " l
-        if [[ "$l" == "1" ]]; then journalctl -u "${SERVER_SVC}" -f; fi
-        if [[ "$l" == "2" ]]; then journalctl -u "${CLIENT_SVC}" -f; fi
-        ;;
-      5) uninstall_all ;;
+      4) show_logs_picker ;;
+      5) update_core; ok "Core updated. (Restart services if running)"; sleep 1 ;;
+      6) uninstall_all ;;
       0) ok "Goodbye!"; exit 0 ;;
       *) warn "Invalid option"; sleep 1 ;;
     esac
   done
 }
 
-check_root
+need_root
 main_menu
