@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =========================
-# PicoTun Installer v2.0
+# PicoTun Installer v2.1 (Auto-Build)
 # =========================
 REPO_DEFAULT="amir6dev/RsTunnel"
 BINARY_DEFAULT="picotun"
@@ -24,22 +24,14 @@ PURPLE='\033[1;35m'
 print_header() {
     clear
     echo -e "${CYAN}======================================================${NC}"
-    echo -e "${PURPLE}      🚀 PicoTun Tunnel Manager (Pro Edition)      ${NC}"
+    echo -e "${PURPLE}      🚀 PicoTun Tunnel Manager (Auto-Build)       ${NC}"
     echo -e "${CYAN}======================================================${NC}"
     echo ""
 }
 
-print_step() {
-    echo -e "${BLUE}➤ $1${NC}"
-}
-
-print_success() {
-    echo -e "${GREEN}✔ $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}✖ $1${NC}"
-}
+print_step() { echo -e "${BLUE}➤ $1${NC}"; }
+print_success() { echo -e "${GREEN}✔ $1${NC}"; }
+print_error() { echo -e "${RED}✖ $1${NC}"; }
 
 need_root() {
     if [[ "${EUID}" -ne 0 ]]; then
@@ -48,95 +40,79 @@ need_root() {
     fi
 }
 
-detect_arch() {
-    local arch
-    arch="$(uname -m)"
-    case "$arch" in
-        x86_64) echo "amd64" ;;
-        aarch64|arm64) echo "arm64" ;;
-        *) print_error "Unsupported architecture: $arch"; exit 1 ;;
-    esac
-}
-
 ensure_deps() {
-    if ! command -v curl &> /dev/null; then
-        print_step "Installing dependencies..."
+    print_step "Checking dependencies..."
+    # Check for Go, Git, Curl
+    if ! command -v go &> /dev/null || ! command -v git &> /dev/null; then
+        echo -e "${YELLOW}📦 Installing Go & Git (Required for building)...${NC}"
         apt-get update -y -qq >/dev/null
-        apt-get install -y curl tar >/dev/null
+        apt-get install -y curl git golang openssl tar >/dev/null
     fi
 }
 
-# --- Installation Logic ---
+# --- Build Logic ---
 
-download_binary() {
-    print_step "Checking for latest version..."
-    local arch=$(detect_arch)
-    local api="https://api.github.com/repos/${REPO_DEFAULT}/releases/latest"
+install_core() {
+    ensure_deps
     
-    # Try to fetch latest url
-    local url=$(curl -fsSL "$api" | grep -Eo 'https://[^"]+picotun_linux_'"$arch"'\.tar\.gz' | head -n 1)
-
-    if [[ -z "$url" ]]; then
-        echo -e "${YELLOW}⚠ Could not auto-detect latest release.${NC}"
-        read -p "Enter manual download URL (or press Enter to retry): " manual_url
-        if [[ -n "$manual_url" ]]; then
-            url="$manual_url"
-        else
-            print_error "Failed to download. Check repo settings."
-            exit 1
-        fi
+    print_step "Cloning source code from GitHub..."
+    rm -rf /tmp/picobuild
+    git clone "https://github.com/${REPO_DEFAULT}.git" /tmp/picobuild
+    
+    if [ ! -d "/tmp/picobuild" ]; then
+        print_error "Failed to clone repository. Check URL or internet."
+        exit 1
     fi
 
-    local tmp="$(mktemp -d)"
-    print_step "Downloading core..."
-    curl -fL "$url" -o "$tmp/picotun.tar.gz"
+    print_step "Building PicoTun Core..."
+    cd /tmp/picobuild || exit
     
-    print_step "Installing..."
-    tar -xzf "$tmp/picotun.tar.gz" -C "$tmp"
-    
-    # Find binary regardless of folder structure
-    local bin_path=$(find "$tmp" -type f -name "picotun" | head -n 1)
-    if [[ -f "$bin_path" ]]; then
-        mv "$bin_path" "$INSTALL_DIR/$BINARY_DEFAULT"
-        chmod +x "$INSTALL_DIR/$BINARY_DEFAULT"
-        rm -rf "$tmp"
-        print_success "PicoTun installed to $INSTALL_DIR/$BINARY_DEFAULT"
+    # Try to build from cmd/picotun
+    if [ -d "cmd/picotun" ]; then
+        go build -o picotun cmd/picotun/main.go
+    elif [ -f "main.go" ]; then
+        go build -o picotun main.go
     else
-        print_error "Binary not found in archive."
+        print_error "Could not find main.go to build!"
+        exit 1
+    fi
+
+    if [ -f "picotun" ]; then
+        mv picotun "$INSTALL_DIR/$BINARY_DEFAULT"
+        chmod +x "$INSTALL_DIR/$BINARY_DEFAULT"
+        rm -rf /tmp/picobuild
+        print_success "PicoTun built and installed successfully!"
+    else
+        print_error "Build failed. Check Go installation."
         exit 1
     fi
 }
 
 # --- Configuration Wizard ---
 
-generate_psk() {
-    openssl rand -hex 16
-}
+generate_psk() { openssl rand -hex 16; }
 
 ask_profile() {
     echo ""
     echo -e "${YELLOW}Select Operation Mode:${NC}"
     echo "  1) 🚀 Speed (Low Security, No Obfuscation)"
     echo "  2) ⚖️  Balanced (Recommended - Standard Obfuscation)"
-    echo "  3) 👻 Ghost (High Security - Heavy Obfuscation & Random Delays)"
+    echo "  3) 👻 Ghost (High Security - Heavy Obfuscation)"
     read -p "Choice [2]: " p_choice
     p_choice=${p_choice:-2}
 
     case $p_choice in
         1) # Speed
             OBFS_ENABLED="false"
-            MIN_PAD=0; MAX_PAD=0
-            MIN_DELAY=0; MAX_DELAY=0
+            MIN_PAD=0; MAX_PAD=0; MIN_DELAY=0; MAX_DELAY=0
             ;;
         3) # Ghost
             OBFS_ENABLED="true"
-            MIN_PAD=100; MAX_PAD=1024
-            MIN_DELAY=20; MAX_DELAY=100
+            MIN_PAD=100; MAX_PAD=1024; MIN_DELAY=20; MAX_DELAY=100
             ;;
         *) # Balanced
             OBFS_ENABLED="true"
-            MIN_PAD=16; MAX_PAD=256
-            MIN_DELAY=0; MAX_DELAY=20
+            MIN_PAD=16; MAX_PAD=256; MIN_DELAY=0; MAX_DELAY=20
             ;;
     esac
 }
@@ -144,7 +120,6 @@ ask_profile() {
 configure_server() {
     print_header
     echo -e "${CYAN}:: SERVER CONFIGURATION ::${NC}"
-    
     mkdir -p "$CONFIG_DIR"
 
     # 1. Network
@@ -165,15 +140,12 @@ configure_server() {
 
     # 4. Mimicry
     echo ""
-    echo -e "${YELLOW}HTTP Mimicry Settings:${NC}"
     read -p "Fake Domain [www.google.com]: " FAKE_DOMAIN
     FAKE_DOMAIN=${FAKE_DOMAIN:-www.google.com}
 
-    # 5. Reverse Tunneling (Port Mapping)
+    # 5. Port Mapping
     echo ""
     echo -e "${YELLOW}Port Forwarding (Reverse Tunnel):${NC}"
-    echo "This forwards traffic from THIS server to the CLIENT'S target."
-    
     TCP_MAPS=()
     while true; do
         echo ""
@@ -185,9 +157,7 @@ configure_server() {
         
         if [[ -n "$bind_port" && -n "$target_addr" ]]; then
             TCP_MAPS+=("0.0.0.0:${bind_port}->${target_addr}")
-            print_success "Mapped 0.0.0.0:${bind_port} -> Tunnel -> Client -> ${target_addr}"
-        else
-            print_error "Invalid input."
+            print_success "Added Map: :${bind_port} -> ${target_addr}"
         fi
     done
 
@@ -227,30 +197,23 @@ EOF
 configure_client() {
     print_header
     echo -e "${CYAN}:: CLIENT CONFIGURATION ::${NC}"
-    
     mkdir -p "$CONFIG_DIR"
 
-    # 1. Connection
     echo ""
     read -p "Server IP Address: " SERVER_IP
     read -p "Server Tunnel Port [1010]: " SERVER_PORT
     SERVER_PORT=${SERVER_PORT:-1010}
-    
     SERVER_URL="http://${SERVER_IP}:${SERVER_PORT}/tunnel"
 
-    # 2. Security
     echo ""
     read -p "Tunnel Password (PSK) [Must match server]: " PSK
     
-    # 3. Profile
-    ask_profile # Must match server ideally, but client enforces outbound
+    ask_profile
 
-    # 4. Mimicry
     echo ""
-    read -p "Fake Domain (Must match server) [www.google.com]: " FAKE_DOMAIN
+    read -p "Fake Domain [www.google.com]: " FAKE_DOMAIN
     FAKE_DOMAIN=${FAKE_DOMAIN:-www.google.com}
 
-    # Write Config
     cat > "$CONFIG_FILE" <<EOF
 mode: client
 server_url: "${SERVER_URL}"
@@ -275,15 +238,12 @@ forward:
   tcp: []
   udp: []
 EOF
-
     print_success "Client configuration saved!"
     install_service
 }
 
-# --- Service Management ---
-
 install_service() {
-    print_step "Creating Systemd Service..."
+    print_step "Starting Service..."
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=PicoTun Tunnel Service
@@ -302,34 +262,29 @@ EOF
     systemctl daemon-reload
     systemctl enable picotun >/dev/null 2>&1
     systemctl restart picotun
-    print_success "Service started successfully!"
-    echo -e "${YELLOW}Logs:${NC} journalctl -u picotun -f"
+    print_success "Service is RUNNING!"
+    echo -e "${YELLOW}Type '4' in menu to view logs.${NC}"
     read -p "Press Enter to continue..."
 }
 
 uninstall_all() {
-    print_step "Removing Service..."
+    print_step "Uninstalling..."
     systemctl stop picotun >/dev/null 2>&1 || true
     systemctl disable picotun >/dev/null 2>&1 || true
-    rm -f "$SERVICE_FILE"
-    rm -f "$INSTALL_DIR/$BINARY_DEFAULT"
-    
+    rm -f "$SERVICE_FILE" "$INSTALL_DIR/$BINARY_DEFAULT"
     read -p "Remove config files? (y/N): " rm_conf
-    if [[ "$rm_conf" =~ ^[Yy] ]]; then
-        rm -rf "$CONFIG_DIR"
-    fi
-    
+    if [[ "$rm_conf" =~ ^[Yy] ]]; then rm -rf "$CONFIG_DIR"; fi
     systemctl daemon-reload
-    print_success "Uninstalled successfully."
+    print_success "Uninstalled."
 }
 
 # --- Main Menu ---
-
+need_root
 while true; do
     print_header
-    echo "1) Install / Update Core"
-    echo "2) Configure SERVER (Iran)"
-    echo "3) Configure CLIENT (Kharej)"
+    echo "1) Install / Update Core (Build from Source)"
+    echo "2) Configure SERVER"
+    echo "3) Configure CLIENT"
     echo "4) Show Logs"
     echo "5) Restart Service"
     echo "6) Uninstall"
@@ -338,11 +293,7 @@ while true; do
     read -p "Select Option: " OPT
 
     case $OPT in
-        1) 
-            ensure_deps
-            download_binary 
-            read -p "Press Enter..."
-            ;;
+        1) install_core; read -p "Press Enter..." ;;
         2) configure_server ;;
         3) configure_client ;;
         4) journalctl -u picotun -f ;;
