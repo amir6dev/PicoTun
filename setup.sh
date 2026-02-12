@@ -3,13 +3,14 @@ set -euo pipefail
 
 # ========= UI =========
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
-say() { echo -e "${CYAN}➤${NC} $*"; }
-ok()  { echo -e "${GREEN}✓${NC} $*"; }
-warn(){ echo -e "${YELLOW}⚠${NC} $*"; }
-die() { echo -e "${RED}✖${NC} $*"; exit 1; }
+say(){ echo -e "${CYAN}➤${NC} $*"; }
+ok(){  echo -e "${GREEN}✓${NC} $*"; }
+warn(){echo -e "${YELLOW}⚠${NC} $*"; }
+die(){ echo -e "${RED}✖${NC} $*"; exit 1; }
 
 # ========= Project =========
-REPO_URL="https://github.com/amir6dev/RsTunnel.git"
+OWNER="amir6dev"
+REPO="RsTunnel"
 APP="picotun"
 
 INSTALL_DIR="/usr/local/bin"
@@ -28,49 +29,54 @@ BUILD_DIR="/tmp/picobuild"
 need_root(){ [[ ${EUID} -eq 0 ]] || die "Run as root (sudo)."; }
 
 ensure_deps(){
-  say "Checking dependencies..."
+  say "Checking environment..."
   if command -v apt >/dev/null 2>&1; then
-    apt-get update -qq >/dev/null
-    apt-get install -y git curl tar >/dev/null
+    apt-get update -y >/dev/null
+    apt-get install -y curl ca-certificates tar git >/dev/null
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y git curl tar >/dev/null
+    yum install -y curl ca-certificates tar git >/dev/null
+  else
+    die "No supported package manager. Install curl+tar+git manually."
   fi
   ok "Dependencies installed"
 }
 
-# --- Install Go (Fixed for IRAN) ---
+banner(){
+  echo -e "${GREEN}*** RsTunnel / PicoTun  ***${NC}"
+  echo -e "Repo: https://github.com/${OWNER}/${REPO}"
+  echo -e "================================="
+  echo ""
+}
+
+# ========= Go Installation (Iran Optimized) =========
 install_go(){
+  # تنظیم پروکسی برای عبور از تحریم
+  export GOPROXY=https://goproxy.cn,direct
+  export GOTOOLCHAIN=local
+  export GOSUMDB=off
+
   if command -v go >/dev/null 2>&1; then
-    # Check if version is > 1.21
-    if go version | grep -E "go1\.(2[1-9]|[3-9][0-9])"; then
+    if go version | grep -E "go1\.(2[2-9]|[3-9][0-9])"; then
        return
     fi
   fi
   
-  # استفاده از میرور Aliyun برای عبور از تحریم‌های گوگل در سرور ایران
   local GO_VER="1.22.1"
-  say "Installing Go ${GO_VER} (from Mirror)..."
+  say "Installing Go ${GO_VER} (Mirror)..."
   
-  # لینک میرور (Aliyun) که در ایران باز است
+  # استفاده از میرور Aliyun که در ایران فیلتر نیست
   local url="https://mirrors.aliyun.com/golang/go${GO_VER}.linux-amd64.tar.gz"
   
   rm -rf /usr/local/go
   if ! curl -fsSL -L "$url" -o /tmp/go.tgz; then
-     die "Download failed from mirror. Check internet connection."
+     die "Download failed from mirror. Check internet."
   fi
   
   tar -C /usr/local -xzf /tmp/go.tgz
   rm -f /tmp/go.tgz
   export PATH="/usr/local/go/bin:${PATH}"
   
-  ok "Go installed successfully."
-}
-
-banner(){
-  echo -e "${GREEN}*** RsTunnel / PicoTun  ***${NC}"
-  echo -e "Repo: ${REPO_URL}"
-  echo -e "================================="
-  echo ""
+  ok "Go installed."
 }
 
 # ========= Build Core =========
@@ -78,9 +84,15 @@ update_core() {
   ensure_deps
   install_go
   
+  # اعمال مجدد متغیرها برای اطمینان
+  export PATH="/usr/local/go/bin:${PATH}"
+  export GOPROXY=https://goproxy.cn,direct
+  export GOTOOLCHAIN=local
+  export GOSUMDB=off
+
   say "Cloning source code..."
   rm -rf "$BUILD_DIR"
-  git clone --depth 1 "$REPO_URL" "$BUILD_DIR" >/dev/null
+  git clone --depth 1 "https://github.com/${OWNER}/${REPO}.git" "$BUILD_DIR" >/dev/null
   
   say "Building binary..."
   if [[ -d "${BUILD_DIR}/PicoTun" ]]; then
@@ -89,9 +101,16 @@ update_core() {
      cd "${BUILD_DIR}"
   fi
   
-  # Auto-fix go.mod
+  # فیکس کردن وابستگی‌ها برای جلوگیری از ارور آپدیت Go
   rm -f go.mod go.sum
   go mod init github.com/amir6dev/rstunnel
+  
+  # اجبار به استفاده از نسخه پایدار x/net که با Go 1.22 سازگار است
+  go get golang.org/x/net@v0.23.0
+  go get github.com/refraction-networking/utls@v1.6.0
+  go get github.com/xtaci/smux@v1.5.24
+  go get gopkg.in/yaml.v3@v3.0.1
+  
   go mod tidy
   
   local TARGET=""
@@ -103,7 +122,7 @@ update_core() {
   CGO_ENABLED=0 go build -o picotun "$TARGET"
   
   install -m 0755 picotun "${BIN_PATH}"
-  ok "Core updated successfully: ${BIN_PATH}"
+  ok "Installed binary: ${BIN_PATH}"
 }
 
 # ========= Config =========
@@ -204,7 +223,7 @@ install_server(){
   write_default_server_config_if_missing
   create_service "server"
   enable_start_service "${SERVER_SVC}"
-  echo ""; echo "👉 Config: ${SERVER_CFG}"; echo "👉 PSK is inside the config."; echo ""
+  echo ""; echo "👉 Config: ${SERVER_CFG}"; echo "👉 PSK is inside config."; echo ""
   read -r -p "Press Enter..." _
 }
 
@@ -256,24 +275,30 @@ manage_service(){
       5) journalctl -u "$svc" -f ;;
       6) systemctl enable "$svc" >/dev/null 2>&1 || true; ok "Auto-start enabled"; sleep 1 ;;
       7) systemctl disable "$svc" >/dev/null 2>&1 || true; ok "Auto-start disabled"; sleep 1 ;;
-      8) [[ -f "$cfg" ]] && cat "$cfg" || warn "Config not found"; read -r -p "Press Enter..." _ ;;
+      8) [[ -f "$cfg" ]] && cat "$cfg" || warn "Config not found: $cfg"; read -r -p "Press Enter..." _ ;;
       9)
         if [[ -f "$cfg" ]]; then
           ${EDITOR:-nano} "$cfg"
-          systemctl restart "$svc" || true
-          ok "Service restarted with new config"
+          echo ""
+          read -r -p "Restart service to apply changes? [y/N]: " r
+          if [[ "$r" =~ ^[Yy]$ ]]; then
+            systemctl restart "$svc" || true
+            ok "Service restarted"
+            sleep 1
+          fi
         else
-          warn "Config not found"
+          warn "Config not found: $cfg"; sleep 1
         fi
         ;;
       10)
-        read -r -p "Delete ${mode}? [y/N]: " y
+        read -r -p "Delete ${mode} config and service? [y/N]: " y
         if [[ "$y" =~ ^[Yy]$ ]]; then
-          systemctl stop "$svc" 2>/dev/null || true
-          systemctl disable "$svc" 2>/dev/null || true
-          rm -f "${SYSTEMD_DIR}/${svc}.service" "$cfg"
+          systemctl stop "$svc" >/dev/null 2>&1 || true
+          systemctl disable "$svc" >/dev/null 2>&1 || true
+          rm -f "${SYSTEMD_DIR}/${svc}.service"
+          rm -f "$cfg"
           systemctl daemon-reload
-          ok "Deleted."
+          ok "Deleted ${mode} config + service"
           sleep 1
         fi
         ;;
@@ -321,20 +346,31 @@ uninstall_all(){
   echo -e "${RED}        UNINSTALL RsTunnel${NC}"
   echo -e "${RED}═══════════════════════════════════════${NC}"
   echo ""
+  echo -e "${YELLOW}This will remove:${NC}"
+  echo "  - Binary: ${BIN_PATH}"
+  echo "  - Configs: ${CONFIG_DIR}"
+  echo "  - Services: ${SERVER_SVC}, ${CLIENT_SVC}"
+  echo ""
   read -r -p "Are you sure? [y/N]: " y
   [[ "$y" =~ ^[Yy]$ ]] || return
 
-  say "Stopping services..."
-  systemctl stop "${SERVER_SVC}" "${CLIENT_SVC}" 2>/dev/null || true
-  systemctl disable "${SERVER_SVC}" "${CLIENT_SVC}" 2>/dev/null || true
+  say "Stopping and disabling services..."
+  systemctl stop "${SERVER_SVC}" >/dev/null 2>&1 || true
+  systemctl stop "${CLIENT_SVC}" >/dev/null 2>&1 || true
+  systemctl disable "${SERVER_SVC}" >/dev/null 2>&1 || true
+  systemctl disable "${CLIENT_SVC}" >/dev/null 2>&1 || true
 
-  say "Removing files..."
-  rm -f "${SYSTEMD_DIR}/${SERVER_SVC}.service" "${SYSTEMD_DIR}/${CLIENT_SVC}.service"
+  say "Removing systemd files..."
+  rm -f "${SYSTEMD_DIR}/${SERVER_SVC}.service"
+  rm -f "${SYSTEMD_DIR}/${CLIENT_SVC}.service"
   systemctl daemon-reload
+
+  say "Removing binary and configs..."
   rm -f "${BIN_PATH}"
   rm -rf "${CONFIG_DIR}"
+  rm -rf "$BUILD_DIR"
 
-  ok "Uninstalled successfully."
+  ok "Uninstalled successfully"
   exit 0
 }
 
@@ -361,7 +397,7 @@ main_menu(){
       2) install_client ;;
       3) settings_menu ;;
       4) show_logs_picker ;;
-      5) update_core; ok "Done."; sleep 2 ;;
+      5) update_core; ok "Core updated. (Restart services if running)"; sleep 1 ;;
       6) uninstall_all ;;
       0) ok "Goodbye!"; exit 0 ;;
       *) warn "Invalid option"; sleep 1 ;;
