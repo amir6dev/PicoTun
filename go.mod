@@ -1,4 +1,4 @@
-module rstunnel
+module github.com/amir6dev/rstunnel
 
 go 1.21
 
