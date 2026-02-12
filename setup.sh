@@ -2,11 +2,13 @@
 set -euo pipefail
 
 # ============================================================================
-# RsTunnel Manager (Dagger-Style Automation) - Iran friendly
-# - Prefers prebuilt binary (no Go needed) ✅
-# - Falls back to build from source if you choose
-# - Never deletes go.mod
-# - Installs systemd services only if binary exists
+# RsTunnel (picotun) Setup - Dagger-style (Iran-friendly)
+#
+# ✅ Prefers prebuilt tar.gz from GitHub Releases (no Go needed)
+# ✅ Uses GitHub API to detect latest release + correct asset name
+# ✅ Rejects HTML / wrong content downloads
+# ✅ Verifies ELF architecture after install
+# ✅ Dependency detection (no reinstall if already present)
 # ============================================================================
 
 APP_NAME="RsTunnel"
@@ -18,14 +20,15 @@ SERVICE_CLIENT="${BIN_NAME}-client"
 
 REPO_OWNER="amir6dev"
 REPO_NAME="RsTunnel"
-REPO_BRANCH_DEFAULT="main"
 REPO_URL_DEFAULT="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
+REPO_BRANCH_DEFAULT="main"
 
-# If GitHub is blocked, we try proxy mirrors (best-effort)
-DL_URLS_BASE=(
-  "https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download"
-  "https://ghproxy.com/https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download"
-  "https://mirror.ghproxy.com/https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download"
+# Mirrors/proxies (best-effort) – for Iran connectivity
+# We'll use these as prefixes for full URLs
+DL_PREFIXES=(
+  ""  # direct
+  "https://ghproxy.com/"
+  "https://mirror.ghproxy.com/"
 )
 
 COLOR_RESET="\033[0m"
@@ -34,10 +37,10 @@ COLOR_RED="\033[0;31m"
 COLOR_YELLOW="\033[0;33m"
 COLOR_CYAN="\033[0;36m"
 
-log() { echo -e "${COLOR_CYAN}$*${COLOR_RESET}"; }
-ok() { echo -e "${COLOR_GREEN}✓${COLOR_RESET} $*"; }
+log()  { echo -e "${COLOR_CYAN}$*${COLOR_RESET}"; }
+ok()   { echo -e "${COLOR_GREEN}✓${COLOR_RESET} $*"; }
 warn() { echo -e "${COLOR_YELLOW}!${COLOR_RESET} $*"; }
-err() { echo -e "${COLOR_RED}✖${COLOR_RESET} $*"; }
+err()  { echo -e "${COLOR_RED}✖${COLOR_RESET} $*"; }
 
 pause() { read -r -p "Press Enter to return..." _; }
 
@@ -80,7 +83,7 @@ pkg_install() {
 ensure_deps() {
   log "📦 Checking dependencies..."
   local missing=()
-  for c in curl git tar; do
+  for c in curl git tar file; do
     have_cmd "$c" || missing+=("$c")
   done
   if ((${#missing[@]}==0)); then
@@ -94,74 +97,184 @@ ensure_deps() {
 
 safe_workdir() { cd / || true; }
 
-download_file() {
+curl_try() {
+  # curl_try <url> <out>
   local url="$1" out="$2"
-  curl -fL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 180 "$url" -o "$out"
+  curl -fL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 240 "$url" -o "$out"
 }
 
-download_prebuilt() {
-  local arch="$1"
-  local name="picotun-linux-${arch}"
-  local tmp
-  tmp="$(mktemp -d /tmp/picotun-dl.XXXXXX)"
-  local out="${tmp}/${BIN_NAME}"
-
-  log "⬇️  Trying to download prebuilt binary (${name})..."
-  local ok_dl=0
-  for base in "${DL_URLS_BASE[@]}"; do
-    local u="${base}/${name}"
-    log "   ${u}"
-    if download_file "$u" "$out"; then
-      ok_dl=1
-      break
-    else
-      warn "Failed: ${u}"
+download_with_prefixes() {
+  # download_with_prefixes <url> <out>
+  local url="$1" out="$2"
+  local p u
+  for p in "${DL_PREFIXES[@]}"; do
+    u="${p}${url}"
+    log "   Download: ${u}"
+    if curl_try "$u" "$out"; then
+      return 0
     fi
+    warn "Failed: ${u}"
   done
+  return 1
+}
 
-  if [[ "$ok_dl" -ne 1 ]]; then
-    rm -rf "$tmp" || true
+github_latest_release_json() {
+  local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
+  # use direct (api usually works) + fallback prefixes
+  local tmp
+  tmp="$(mktemp /tmp/picotun-release.XXXXXX.json)"
+  if ! download_with_prefixes "$api" "$tmp"; then
+    rm -f "$tmp" || true
+    return 1
+  fi
+  cat "$tmp"
+  rm -f "$tmp" || true
+}
+
+extract_json_field() {
+  # very small json extraction without jq, best-effort
+  # extract_json_field <key> reads stdin
+  local key="$1"
+  python3 - "$key" <<'PY' 2>/dev/null || true
+import sys, json
+key=sys.argv[1]
+data=json.load(sys.stdin)
+print(data.get(key,""))
+PY
+}
+
+list_assets() {
+  python3 - <<'PY'
+import sys, json
+data=json.load(sys.stdin)
+for a in data.get("assets",[]):
+    print(a.get("name",""), a.get("browser_download_url",""))
+PY
+}
+
+pick_asset_url() {
+  # pick_asset_url <arch>
+  local arch="$1"
+  local want="picotun_linux_${arch}.tar.gz"
+
+  local json
+  json="$(github_latest_release_json)" || return 1
+
+  local tag
+  tag="$(printf "%s" "$json" | extract_json_field tag_name)"
+  [[ -n "$tag" ]] || tag="latest"
+
+  local url=""
+  while read -r name u; do
+    if [[ "$name" == "$want" ]]; then
+      url="$u"
+      break
+    fi
+  done < <(printf "%s" "$json" | list_assets)
+
+  if [[ -z "$url" ]]; then
+    err "Release asset not found: ${want}"
+    echo "Found assets:"
+    printf "%s" "$json" | list_assets | sed 's/^/  - /'
     return 1
   fi
 
-  chmod +x "$out"
-  install -m 0755 "$out" "$BIN_PATH"
-  rm -rf "$tmp" || true
-  ok "Installed binary to ${BIN_PATH}"
+  echo "$url"
+}
+
+is_html_file() {
+  local f="$1"
+  file "$f" | grep -qiE 'HTML|text'
+}
+
+is_gzip_file() {
+  local f="$1"
+  file "$f" | grep -qiE 'gzip compressed data'
+}
+
+verify_elf_arch() {
+  # verify_elf_arch <bin> <arch>
+  local bin="$1" arch="$2"
+  local info
+  info="$(file "$bin" || true)"
+
+  echo "$info" | grep -q "ELF" || { err "Not an ELF binary: $info"; return 1; }
+
+  if [[ "$arch" == "amd64" ]]; then
+    echo "$info" | grep -qiE "x86-64|x86_64" || { err "Wrong arch (expected amd64): $info"; return 1; }
+  elif [[ "$arch" == "arm64" ]]; then
+    echo "$info" | grep -qiE "aarch64|ARM aarch64" || { err "Wrong arch (expected arm64): $info"; return 1; }
+  fi
   return 0
 }
 
-clone_repo() {
-  local repo_url="$1" branch="$2"
-  safe_workdir
-  local builddir
-  builddir="$(mktemp -d /tmp/picobuild.XXXXXX)"
-  log "🌐 Cloning from GitHub ..."
-  git clone --depth 1 --branch "$branch" "$repo_url" "$builddir" >/dev/null
-  echo "$builddir"
-}
+install_core_from_release() {
+  ensure_deps
 
-build_from_source() {
-  if ! have_cmd go; then
-    err "Go is not installed. For Iran-friendly install, use prebuilt binaries via GitHub Releases."
-    err "If you REALLY need build-from-source: install Go via apt/yum or provide a local Go mirror."
+  local arch
+  arch="$(detect_arch)"
+  log "⬇️  Installing core for arch: ${arch}"
+
+  local url
+  url="$(pick_asset_url "$arch")" || return 1
+  ok "Using asset: ${url}"
+
+  local tmpd tgz
+  tmpd="$(mktemp -d /tmp/picotun-dl.XXXXXX)"
+  tgz="${tmpd}/picotun.tgz"
+
+  log "⬇️  Downloading release tar.gz..."
+  if ! download_with_prefixes "$url" "$tgz"; then
+    rm -rf "$tmpd" || true
+    err "Failed to download release asset."
     return 1
   fi
 
-  local repo_url="$1" branch="$2"
-  local builddir
-  builddir="$(clone_repo "$repo_url" "$branch")"
-  trap 'rm -rf "$builddir" 2>/dev/null || true' RETURN
+  # basic sanity checks
+  if [[ ! -s "$tgz" ]]; then
+    rm -rf "$tmpd" || true
+    err "Downloaded file is empty."
+    return 1
+  fi
 
-  log "📦 Downloading Libraries..."
-  export GOFLAGS="-mod=mod"
-  ( cd "$builddir" && go mod download ) || true
-  ( cd "$builddir" && go mod tidy ) || true
+  if is_html_file "$tgz"; then
+    rm -rf "$tmpd" || true
+    err "Downloaded HTML instead of tar.gz (blocked/proxy page)."
+    return 1
+  fi
 
-  log "🔨 Building binary..."
-  ( cd "$builddir" && go build -o "${BIN_NAME}" ./cmd/picotun )
-  install -m 0755 "${builddir}/${BIN_NAME}" "$BIN_PATH"
-  ok "Built & installed to ${BIN_PATH}"
+  if ! is_gzip_file "$tgz"; then
+    warn "Downloaded file is not detected as gzip. file=$(file "$tgz")"
+    # still try to extract, but usually this means it's wrong
+  fi
+
+  log "📦 Extracting..."
+  tar -xzf "$tgz" -C "$tmpd"
+
+  if [[ ! -f "${tmpd}/${BIN_NAME}" ]]; then
+    # maybe nested
+    local found
+    found="$(find "$tmpd" -maxdepth 3 -type f -name "${BIN_NAME}" | head -n 1 || true)"
+    if [[ -z "$found" ]]; then
+      rm -rf "$tmpd" || true
+      err "Binary '${BIN_NAME}' not found inside tar."
+      return 1
+    fi
+    cp -f "$found" "${tmpd}/${BIN_NAME}"
+  fi
+
+  chmod +x "${tmpd}/${BIN_NAME}"
+  install -m 0755 "${tmpd}/${BIN_NAME}" "$BIN_PATH"
+
+  if ! verify_elf_arch "$BIN_PATH" "$arch"; then
+    rm -rf "$tmpd" || true
+    err "Installed binary is not compatible with this server."
+    err "Tip: your GitHub Action might be producing wrong arch outputs."
+    return 1
+  fi
+
+  rm -rf "$tmpd" || true
+  ok "Core installed: ${BIN_PATH}"
   return 0
 }
 
@@ -169,7 +282,7 @@ make_dirs() { mkdir -p "$INSTALL_DIR"; }
 
 write_server_service() {
   local cfg="$1"
-  cat > "/etc/systemd/system/${SERVICE_SERVER}.service" <<EOF2
+  cat > "/etc/systemd/system/${SERVICE_SERVER}.service" <<EOF
 [Unit]
 Description=${APP_NAME} Server Service
 After=network.target
@@ -187,12 +300,12 @@ LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
-EOF2
+EOF
 }
 
 write_client_service() {
   local cfg="$1"
-  cat > "/etc/systemd/system/${SERVICE_CLIENT}.service" <<EOF2
+  cat > "/etc/systemd/system/${SERVICE_CLIENT}.service" <<EOF
 [Unit]
 Description=${APP_NAME} Client Service
 After=network.target
@@ -210,7 +323,7 @@ LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
-EOF2
+EOF
 }
 
 systemd_reload() { systemctl daemon-reload; }
@@ -246,31 +359,6 @@ ua_by_choice() {
     5) echo "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36" ;;
     *) echo "Mozilla/5.0" ;;
   esac
-}
-
-install_core() {
-  ensure_deps
-
-  local arch
-  arch="$(detect_arch)"
-
-  # Prefer prebuilt
-  if download_prebuilt "$arch"; then
-    return 0
-  fi
-
-  warn "Prebuilt download failed."
-  if ask_yn "Fallback to build from source (requires Go)?" "n"; then
-    local repo_url branch
-    repo_url="$(ask "Repo URL" "$REPO_URL_DEFAULT")"
-    branch="$(ask "Repo branch" "$REPO_BRANCH_DEFAULT")"
-    build_from_source "$repo_url" "$branch"
-    return $?
-  fi
-
-  err "Cannot install core without prebuilt binary."
-  err "Create GitHub Release assets: picotun-linux-amd64 and picotun-linux-arm64"
-  return 1
 }
 
 install_server_flow() {
@@ -344,7 +432,7 @@ install_server_flow() {
   if ask_yn "Enable session cookies?" "Y"; then session_cookie="true"; else session_cookie="false"; fi
   if ask_yn "Enable chunked encoding?" "n"; then chunked="true"; else chunked="false"; fi
 
-  if ! install_core; then
+  if ! install_core_from_release; then
     pause
     return
   fi
@@ -387,12 +475,6 @@ install_server_flow() {
     echo "    - \"Accept-Language: en-US,en;q=0.9\""
     echo "    - \"Accept-Encoding: gzip, deflate, br\""
   } > "$cfg"
-
-  if [[ ! -x "$BIN_PATH" ]]; then
-    err "Binary not found at ${BIN_PATH}, aborting service install."
-    pause
-    return
-  fi
 
   write_server_service "$cfg"
   systemd_reload
@@ -483,7 +565,7 @@ install_client_flow() {
   if ask_yn "Enable session cookies?" "Y"; then session_cookie="true"; else session_cookie="false"; fi
   if ask_yn "Enable verbose logging?" "N"; then verbose="true"; else verbose="false"; fi
 
-  if ! install_core; then
+  if ! install_core_from_release; then
     pause
     return
   fi
@@ -522,12 +604,6 @@ install_client_flow() {
     echo "    - \"X-Requested-With: XMLHttpRequest\""
     echo "    - \"Referer: https://${fake_domain}/\""
   } > "$cfg"
-
-  if [[ ! -x "$BIN_PATH" ]]; then
-    err "Binary not found at ${BIN_PATH}, aborting service install."
-    pause
-    return
-  fi
 
   write_client_service "$cfg"
   systemd_reload
@@ -626,7 +702,7 @@ main_menu() {
       2) install_client_flow ;;
       3) settings_menu ;;
       4)
-        if install_core; then ok "Core updated"; else err "Core update failed"; fi
+        if install_core_from_release; then ok "Core updated"; else err "Core update failed"; fi
         pause
         ;;
       5) uninstall_all ;;
@@ -638,6 +714,3 @@ main_menu() {
 
 need_root
 main_menu
-EOF
-
-bash /root/setup.sh
