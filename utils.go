@@ -1,6 +1,25 @@
 package httpmux
 
-import "strings"
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"strings"
+)
+
+// RandString returns a URL-safe random string with ~n chars.
+func RandString(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	// base64 expands by ~4/3, so generate enough bytes
+	b := make([]byte, (n*3+3)/4)
+	_, _ = rand.Read(b)
+	s := base64.RawURLEncoding.EncodeToString(b)
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
 
 // SplitMap parses "bind->target".
 // bind can be "1412" or "0.0.0.0:1412"
@@ -15,8 +34,6 @@ func SplitMap(s string) (bind string, target string, ok bool) {
 	if bind == "" || target == "" {
 		return "", "", false
 	}
-
-	// If bind is only a port, convert to 0.0.0.0:PORT
 	if !strings.Contains(bind, ":") {
 		bind = "0.0.0.0:" + bind
 	}
