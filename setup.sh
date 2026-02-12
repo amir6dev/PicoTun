@@ -3,10 +3,12 @@ set -euo pipefail
 
 # ========= UI =========
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
-say(){ echo -e "${CYAN}➤${NC} $*"; }
-ok(){  echo -e "${GREEN}✓${NC} $*"; }
-warn(){echo -e "${YELLOW}⚠${NC} $*"; }
-die(){ echo -e "${RED}✖${NC} $*"; exit 1; }
+
+# Fix: Added strict spacing for functions
+say() { echo -e "${CYAN}➤${NC} $*"; }
+ok()  { echo -e "${GREEN}✓${NC} $*"; }
+warn() { echo -e "${YELLOW}⚠${NC} $*"; }
+die() { echo -e "${RED}✖${NC} $*"; exit 1; }
 
 # ========= Project =========
 OWNER="amir6dev"
@@ -26,9 +28,9 @@ CLIENT_SVC="picotun-client"
 BUILD_DIR="/tmp/picobuild"
 
 # ========= Helpers =========
-need_root(){ [[ ${EUID} -eq 0 ]] || die "Run as root (sudo)."; }
+need_root() { [[ ${EUID} -eq 0 ]] || die "Run as root (sudo)."; }
 
-ensure_deps(){
+ensure_deps() {
   say "Checking environment..."
   if command -v apt >/dev/null 2>&1; then
     apt-get update -y >/dev/null
@@ -41,21 +43,22 @@ ensure_deps(){
   ok "Dependencies installed"
 }
 
-banner(){
-  echo -e "${GREEN}*** RsTunnel / PicoTun  ***${NC}"
+banner() {
+  echo -e "${GREEN}*** RsTunnel / PicoTun Ultimate ***${NC}"
   echo -e "Repo: https://github.com/${OWNER}/${REPO}"
   echo -e "================================="
   echo ""
 }
 
 # ========= Go Installation (Iran Optimized) =========
-install_go(){
-  # تنظیم پروکسی برای عبور از تحریم
+install_go() {
+  # تنظیمات حیاتی برای ایران: استفاده از پروکسی چین و جلوگیری از آپدیت تولچین
   export GOPROXY=https://goproxy.cn,direct
   export GOTOOLCHAIN=local
   export GOSUMDB=off
 
   if command -v go >/dev/null 2>&1; then
+    # اگر ورژن نصب شده 1.22 یا بالاتر است، نیازی به نصب نیست
     if go version | grep -E "go1\.(2[2-9]|[3-9][0-9])"; then
        return
     fi
@@ -64,7 +67,7 @@ install_go(){
   local GO_VER="1.22.1"
   say "Installing Go ${GO_VER} (Mirror)..."
   
-  # استفاده از میرور Aliyun که در ایران فیلتر نیست
+  # استفاده از میرور Aliyun برای سرعت بالا در ایران
   local url="https://mirrors.aliyun.com/golang/go${GO_VER}.linux-amd64.tar.gz"
   
   rm -rf /usr/local/go
@@ -84,7 +87,7 @@ update_core() {
   ensure_deps
   install_go
   
-  # اعمال مجدد متغیرها برای اطمینان
+  # اعمال دوباره متغیرها برای اطمینان
   export PATH="/usr/local/go/bin:${PATH}"
   export GOPROXY=https://goproxy.cn,direct
   export GOTOOLCHAIN=local
@@ -95,30 +98,37 @@ update_core() {
   git clone --depth 1 "https://github.com/${OWNER}/${REPO}.git" "$BUILD_DIR" >/dev/null
   
   say "Building binary..."
+  # مدیریت مسیر پروژه (اگر کدها داخل پوشه PicoTun باشند یا در روت)
   if [[ -d "${BUILD_DIR}/PicoTun" ]]; then
      cd "${BUILD_DIR}/PicoTun"
   else
      cd "${BUILD_DIR}"
   fi
   
-  # فیکس کردن وابستگی‌ها برای جلوگیری از ارور آپدیت Go
+  # 1. حذف فایل‌های مزاحم قبلی
   rm -f go.mod go.sum
+  
+  # 2. ساخت ماژول جدید
   go mod init github.com/amir6dev/rstunnel
   
-  # اجبار به استفاده از نسخه پایدار x/net که با Go 1.22 سازگار است
+  say "Pinning dependencies (Iran Safe Mode)..."
+  # 3. دانلود نسخه‌های خاص و سازگار با Go 1.22 (جلوگیری از ارور Toolchain)
   go get golang.org/x/net@v0.23.0
   go get github.com/refraction-networking/utls@v1.6.0
   go get github.com/xtaci/smux@v1.5.24
   go get gopkg.in/yaml.v3@v3.0.1
   
+  # 4. مرتب‌سازی نهایی
   go mod tidy
   
+  # 5. پیدا کردن فایل main
   local TARGET=""
   if [[ -f "cmd/picotun/main.go" ]]; then TARGET="cmd/picotun/main.go"; fi
   if [[ -f "main.go" ]]; then TARGET="main.go"; fi
   
   if [[ -z "$TARGET" ]]; then die "Could not find main.go"; fi
   
+  # 6. بیلد کردن
   CGO_ENABLED=0 go build -o picotun "$TARGET"
   
   install -m 0755 picotun "${BIN_PATH}"
@@ -126,9 +136,9 @@ update_core() {
 }
 
 # ========= Config =========
-ensure_config_dir(){ mkdir -p "${CONFIG_DIR}"; }
+ensure_config_dir() { mkdir -p "${CONFIG_DIR}"; }
 
-write_default_server_config_if_missing(){
+write_default_server_config_if_missing() {
   ensure_config_dir
   [[ -f "${SERVER_CFG}" ]] && return
   cat > "${SERVER_CFG}" <<EOF
@@ -157,7 +167,7 @@ EOF
   ok "Created default server config: ${SERVER_CFG}"
 }
 
-write_default_client_config_if_missing(){
+write_default_client_config_if_missing() {
   ensure_config_dir
   [[ -f "${CLIENT_CFG}" ]] && return
   cat > "${CLIENT_CFG}" <<'YAML'
@@ -210,14 +220,14 @@ EOF
   ok "Service created: ${svc}.service"
 }
 
-enable_start_service(){
+enable_start_service() {
   local svc="$1"
   systemctl enable --now "$svc" >/dev/null 2>&1 || true
   ok "Started: $svc"
 }
 
 # ========= Flows =========
-install_server(){
+install_server() {
   banner
   update_core
   write_default_server_config_if_missing
@@ -227,7 +237,7 @@ install_server(){
   read -r -p "Press Enter..." _
 }
 
-install_client(){
+install_client() {
   banner
   update_core
   write_default_client_config_if_missing
@@ -237,7 +247,7 @@ install_client(){
   read -r -p "Press Enter..." _
 }
 
-manage_service(){
+manage_service() {
   local mode="$1" svc cfg title
   if [[ "$mode" == "server" ]]; then
     svc="${SERVER_SVC}"; cfg="${SERVER_CFG}"; title="SERVER MANAGEMENT"
@@ -279,26 +289,20 @@ manage_service(){
       9)
         if [[ -f "$cfg" ]]; then
           ${EDITOR:-nano} "$cfg"
-          echo ""
-          read -r -p "Restart service to apply changes? [y/N]: " r
-          if [[ "$r" =~ ^[Yy]$ ]]; then
-            systemctl restart "$svc" || true
-            ok "Service restarted"
-            sleep 1
-          fi
+          systemctl restart "$svc" || true
+          ok "Service restarted with new config"
         else
-          warn "Config not found: $cfg"; sleep 1
+          warn "Config not found"
         fi
         ;;
       10)
         read -r -p "Delete ${mode} config and service? [y/N]: " y
         if [[ "$y" =~ ^[Yy]$ ]]; then
-          systemctl stop "$svc" >/dev/null 2>&1 || true
-          systemctl disable "$svc" >/dev/null 2>&1 || true
-          rm -f "${SYSTEMD_DIR}/${svc}.service"
-          rm -f "$cfg"
+          systemctl stop "$svc" 2>/dev/null || true
+          systemctl disable "$svc" 2>/dev/null || true
+          rm -f "${SYSTEMD_DIR}/${svc}.service" "$cfg"
           systemctl daemon-reload
-          ok "Deleted ${mode} config + service"
+          ok "Deleted."
           sleep 1
         fi
         ;;
@@ -308,7 +312,7 @@ manage_service(){
   done
 }
 
-settings_menu(){
+settings_menu() {
   while true; do
     banner
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
@@ -330,7 +334,7 @@ settings_menu(){
   done
 }
 
-show_logs_picker(){
+show_logs_picker() {
   banner
   echo ""
   echo "  1) Server logs"
@@ -340,16 +344,11 @@ show_logs_picker(){
   if [[ "$l" == "2" ]]; then journalctl -u "${CLIENT_SVC}" -f; fi
 }
 
-uninstall_all(){
+uninstall_all() {
   banner
   echo -e "${RED}═══════════════════════════════════════${NC}"
   echo -e "${RED}        UNINSTALL RsTunnel${NC}"
   echo -e "${RED}═══════════════════════════════════════${NC}"
-  echo ""
-  echo -e "${YELLOW}This will remove:${NC}"
-  echo "  - Binary: ${BIN_PATH}"
-  echo "  - Configs: ${CONFIG_DIR}"
-  echo "  - Services: ${SERVER_SVC}, ${CLIENT_SVC}"
   echo ""
   read -r -p "Are you sure? [y/N]: " y
   [[ "$y" =~ ^[Yy]$ ]] || return
@@ -370,11 +369,11 @@ uninstall_all(){
   rm -rf "${CONFIG_DIR}"
   rm -rf "$BUILD_DIR"
 
-  ok "Uninstalled successfully"
+  ok "Uninstalled successfully."
   exit 0
 }
 
-main_menu(){
+main_menu() {
   while true; do
     banner
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
