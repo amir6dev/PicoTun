@@ -229,29 +229,33 @@ ask_mimic() {
     if [[ "${SESSION_COOKIE}" =~ ^[Nn] ]]; then SESSION_COOKIE_BOOL="false"; else SESSION_COOKIE_BOOL="true"; fi
 
     CUSTOM_HEADERS_YAML=""
-    echo ""
-    echo -e "${YELLOW}Custom Headers (Optional)${NC}"
-    echo -e "${YELLOW}Example: X-Forwarded-For: 1.2.3.4${NC}"
-    while true; do
-        read -r -p "Add custom header? [y/N]: " yn
-        [[ ! "$yn" =~ ^[Yy] ]] && break
-        read -r -p "  Header (Key: Value): " hdr
-        hdr="$(echo "$hdr" | sed 's/^ *//;s/ *$//')"
-        if [[ -z "$hdr" || "$hdr" != *:* ]]; then
-            warn "Invalid header format. Skipping."
-            continue
-        fi
-        CUSTOM_HEADERS_YAML="${CUSTOM_HEADERS_YAML}    - "${hdr}"
-"
-        ok "Added header: $hdr"
-    done
+echo ""
+echo -e "${YELLOW}Custom Headers (Optional)${NC}"
+echo -e "${YELLOW}Example: X-Forwarded-For: 1.2.3.4${NC}"
 
-    if [[ -z "$CUSTOM_HEADERS_YAML" ]]; then
-        CUSTOM_HEADERS_BLOCK="  custom_headers: []"
-    else
-        CUSTOM_HEADERS_BLOCK=$'  custom_headers:
-'"${CUSTOM_HEADERS_YAML%\n}"
+while true; do
+    read -r -p "Add custom header? [y/N]: " yn
+    [[ ! "$yn" =~ ^[Yy] ]] && break
+
+    read -r -p "  Header (Key: Value): " hdr
+    hdr="$(echo "$hdr" | sed 's/^ *//;s/ *$//')"
+
+    if [[ -z "$hdr" || "$hdr" != *:* ]]; then
+        warn "Invalid header format. Skipping."
+        continue
     fi
+
+    # ✅ درست: هر هدر یک آیتم YAML با کوتیشن
+    CUSTOM_HEADERS_YAML+=$'    - "'"$hdr"$'"\n'
+    ok "Added header: $hdr"
+done
+
+if [[ -z "$CUSTOM_HEADERS_YAML" ]]; then
+    CUSTOM_HEADERS_BLOCK="  custom_headers: []"
+else
+    CUSTOM_HEADERS_BLOCK=$'  custom_headers:\n'"${CUSTOM_HEADERS_YAML}"
+fi
+
 }
 
 ask_obfs() {
