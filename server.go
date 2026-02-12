@@ -2,7 +2,6 @@ package httpmux
 
 import (
 	"bytes"
-	"crypto/rand"
 	"io"
 	"net/http"
 	"sync"
@@ -54,7 +53,6 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 	// ✅ فیکس: آپدیت کردن سشن فعال به آخرین کلاینت متصل شده
 	s.setActiveSession(sess)
 
-	// خواندن بادی درخواست
 	reqBody, _ := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 
@@ -62,12 +60,11 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 	reqBody = StripObfuscation(reqBody, s.Obfs)
 	plain, err := DecryptPSK(reqBody, s.PSK)
 	if err != nil {
-		// ✅ فیکس: لاگ خطا ندهیم که لاگ پر شود، فقط قطع کنیم
+		// ✅ فیکس: اگر رمز اشتباه بود، ارور 403 بده و قطع کن (جلوگیری از Flood)
 		http.Error(w, "Forbidden", 403)
 		return
 	}
 
-	// پردازش فریم‌ها
 	reader := bytes.NewReader(plain)
 	for {
 		fr, err := ReadFrame(reader)
@@ -75,9 +72,9 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleFrame(sess, fr)
 	}
 
-	// ارسال پاسخ (Drain Outgoing)
+	// Drain Outgoing Frames
 	var out bytes.Buffer
-	max := 128 // محدودیت بچ برای جلوگیری از تاخیر
+	max := 128
 	for i := 0; i < max; i++ {
 		select {
 		case fr := <-sess.Outgoing:
@@ -123,12 +120,4 @@ func (s *Server) handleFrame(sess *Session, fr *Frame) {
 func extractSessionID(r *http.Request) string {
 	if c, _ := r.Cookie("SESSION"); c != nil && c.Value != "" { return c.Value }
 	return "sess-" + RandString(12)
-}
-
-func RandString(n int) string {
-	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, n)
-	rand.Read(b)
-	for i := range b { b[i] = chars[int(b[i])%len(chars)] }
-	return string(b)
 }

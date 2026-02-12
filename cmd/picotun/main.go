@@ -6,14 +6,18 @@ import (
 	"net/http"
 	"strings"
 
-	// ✅ فیکس: ایمپورت صحیح پکیج داخلی
-	"github.com/amir6dev/rstunnel/httpmux" 
+	// ✅ فیکس: مسیر درست پکیج طبق go.mod
+	"github.com/amir6dev/rstunnel/PicoTun"
 )
 
 func main() {
 	configPath := flag.String("config", "/etc/picotun/config.yaml", "Path to config")
 	flag.Parse()
 
+	// توجه: اینجا پکیج ایمپورت شده PicoTun نامیده شده چون پوشه آن PicoTun است
+	// اگر نام پکیج داخل فایل‌های Go "httpmux" است، باید alias تعریف کنید:
+	// import httpmux "github.com/amir6dev/rstunnel/PicoTun"
+	
 	cfg, err := httpmux.LoadConfig(*configPath)
 	if err != nil { log.Fatalf("Config error: %v", err) }
 	
@@ -29,7 +33,6 @@ func runServer(cfg *httpmux.Config) {
 	
 	srv := httpmux.NewServer(cfg.SessionTimeout, &cfg.Mimic, &cfg.Obfs, cfg.PSK)
 
-	// Reverse Listeners
 	if cfg.Forward != nil {
 		for _, m := range cfg.Forward.TCP {
 			bind, target, ok := splitMap(m)
@@ -47,7 +50,7 @@ func runClient(cfg *httpmux.Config) {
 	rev := httpmux.NewClientReverse(cl.Transport)
 	
 	log.Printf("🚀 Client connected to %s", cfg.ServerURL)
-	rev.Run() // Blocks forever
+	rev.Run()
 }
 
 func splitMap(s string) (string, string, bool) {

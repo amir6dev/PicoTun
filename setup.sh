@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =========================
-# PicoTun Manager (Dagger Style)
+# PicoTun Manager (Full Automation)
 # =========================
 REPO_DEFAULT="amir6dev/RsTunnel"
 BINARY_NAME="picotun"
@@ -50,16 +50,27 @@ install_core() {
     git clone "https://github.com/${REPO_DEFAULT}.git" /tmp/picobuild
     cd /tmp/picobuild || exit
     
-    # ✅ FIX: Generate go.sum automatically
-    if [ -f "go.mod" ]; then
+    # ✅ FIX: حل مشکل go.sum و وابستگی‌ها
+    if [ -f "PicoTun/go.mod" ]; then
+        cd PicoTun
+        print_msg "Resolving dependencies (go mod tidy)..."
+        go mod tidy
+        cd ..
+    elif [ -f "go.mod" ]; then
         print_msg "Resolving dependencies (go mod tidy)..."
         go mod tidy
     fi
     
-    # Build
-    TARGET="main.go"
+    # Build Correct Path
+    TARGET=""
     if [ -f "cmd/picotun/main.go" ]; then TARGET="cmd/picotun/main.go"; fi
+    if [ -f "PicoTun/cmd/picotun/main.go" ]; then TARGET="PicoTun/cmd/picotun/main.go"; fi
     
+    if [ -z "$TARGET" ]; then
+        print_err "Could not find main.go!"
+        exit 1
+    fi
+
     CGO_ENABLED=0 go build -o picotun "$TARGET"
     
     if [ -f "picotun" ]; then
@@ -154,8 +165,7 @@ EOF
     print_ok "Service Restarted"
 }
 
-# --- Menus ---
-
+# --- Service Management Menu ---
 manage_menu() {
     while true; do
         print_header
@@ -181,9 +191,10 @@ manage_menu() {
     done
 }
 
+# --- Full Uninstall ---
 uninstall_all() {
     echo ""
-    read -p "Are you sure you want to DELETE everything? (y/N): " yn
+    read -p "Are you sure you want to DELETE everything (Service, Configs, Binary)? (y/N): " yn
     if [[ "$yn" =~ ^[Yy] ]]; then
         print_msg "Uninstalling..."
         systemctl stop picotun >/dev/null 2>&1 || true
@@ -196,6 +207,7 @@ uninstall_all() {
     fi
 }
 
+# --- Main Menu ---
 main_menu() {
     while true; do
         print_header
