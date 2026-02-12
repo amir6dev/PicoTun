@@ -6,8 +6,13 @@ set -euo pipefail
 # ============================================================================
 
 # Colors
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
-BLUE='\033[0;34m'; PURPLE='\033[0;35m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
 # Paths
 REPO_URL="https://github.com/amir6dev/RsTunnel.git"
@@ -45,7 +50,7 @@ banner() {
 ensure_deps() {
     echo -e "${YELLOW}📦 Installing dependencies...${NC}"
     if command -v apt &>/dev/null; then
-        apt-get update -qq
+        apt-get update -qq >/dev/null
         apt-get install -y curl wget git tar openssl iproute2 >/dev/null 2>&1
     elif command -v yum &>/dev/null; then
         yum install -y curl wget git tar openssl iproute2 >/dev/null 2>&1
@@ -90,16 +95,16 @@ update_core() {
     git clone --depth 1 "$REPO_URL" "$BUILD_DIR" >/dev/null
     
     cd "$BUILD_DIR"
-    echo -e "${YELLOW}🔧 Fixing build environment...${NC}"
+    echo -e "${YELLOW}🔧 Fixing build environment (Iran Safe)...${NC}"
     
-    # اصلاح ساختار ماژول و ایمپورت‌ها
+    # اصلاح ساختار ماژول و ایمپورت‌ها برای رفع ارور بیلد
     rm -f go.mod go.sum
     go mod init github.com/amir6dev/rstunnel
     
-    find . -name "*.go" -type f -exec sed -i 's|github.com/amir6dev/RsTunnel/PicoTun|github.com/amir6dev/rstunnel|g' {} +
+    find . -name "*.go" -type f -exec sed -i 's|github.com/amir6dev/RsTunnel/PicoTun|github.com/amir6dev/rstunnel/PicoTun|g' {} +
     find . -name "*.go" -type f -exec sed -i 's|github.com/amir6dev/RsTunnel|github.com/amir6dev/rstunnel|g' {} +
 
-    # پین کردن نسخه کتابخانه‌ها
+    # پین کردن نسخه کتابخانه‌ها (جلوگیری از ارور 403 گوگل)
     go get golang.org/x/net@v0.23.0
     go get github.com/refraction-networking/utls@v1.6.0
     go get github.com/xtaci/smux@v1.5.24
@@ -138,10 +143,13 @@ optimize_system() {
     cat > /etc/sysctl.d/99-picotun.conf << 'EOF'
 net.core.rmem_max=8388608
 net.core.wmem_max=8388608
+net.core.rmem_default=131072
+net.core.wmem_default=131072
 net.ipv4.tcp_rmem=4096 65536 8388608
 net.ipv4.tcp_wmem=4096 65536 8388608
 net.ipv4.tcp_window_scaling=1
 net.ipv4.tcp_timestamps=1
+net.ipv4.tcp_sack=1
 net.ipv4.tcp_fastopen=3
 net.ipv4.tcp_congestion_control=bbr
 net.core.default_qdisc=fq
@@ -154,7 +162,7 @@ EOF
 }
 
 # ============================================================================
-#  CONFIGURATION WIZARD
+#  CONFIGURATION WIZARD (Dagger Style)
 # ============================================================================
 
 configure_server() {
@@ -171,13 +179,17 @@ configure_server() {
 
     # 2. PSK
     echo ""
-    read -p "Enter PSK (Leave empty to generate): " USER_PSK
-    if [ -z "$USER_PSK" ]; then
-        PSK=$(openssl rand -hex 16)
-        echo -e "${GREEN}Generated PSK: ${PSK}${NC}"
-    else
-        PSK="$USER_PSK"
-    fi
+    while true; do
+        read -p "Enter PSK (Leave empty to auto-generate): " USER_PSK
+        if [ -z "$USER_PSK" ]; then
+            PSK=$(openssl rand -hex 16)
+            echo -e "${GREEN}Generated PSK: ${PSK}${NC}"
+            break
+        else
+            PSK="$USER_PSK"
+            break
+        fi
+    done
 
     # 3. Mimicry
     echo ""
@@ -191,7 +203,7 @@ configure_server() {
     read -p "Enable Obfuscation? [Y/n]: " ENABLE_OBFS
     if [[ "$ENABLE_OBFS" =~ ^[Nn] ]]; then OBFS_BOOL="false"; else OBFS_BOOL="true"; fi
 
-    # 5. Port Mapping (The Dagger way)
+    # 5. Port Mapping (Fixed YAML formatting)
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
     echo -e "${CYAN}      PORT MAPPINGS                    ${NC}"
@@ -207,8 +219,9 @@ configure_server() {
         read -p "  Bind Port (e.g. 2080): " BP
         read -p "  Target IP:Port (e.g. 127.0.0.1:80): " TP
         
-        # Validation logic can go here
-        MAPPINGS_YAML+="    - \"0.0.0.0:${BP}->${TP}\"\n"
+        # ✅ FIX: Use printf to append newline properly for YAML
+        MAPPINGS_YAML="${MAPPINGS_YAML}    - \"0.0.0.0:${BP}->${TP}\"
+"
         ok "Added: 0.0.0.0:${BP} -> ${TP}"
     done
 
@@ -264,6 +277,10 @@ configure_client() {
     read -p "Fake Domain (Must match server): " FAKE_DOMAIN
     FAKE_DOMAIN=${FAKE_DOMAIN:-www.google.com}
 
+    echo ""
+    read -p "Enable Obfuscation? [Y/n]: " ENABLE_OBFS
+    if [[ "$ENABLE_OBFS" =~ ^[Nn] ]]; then OBFS_BOOL="false"; else OBFS_BOOL="true"; fi
+
     cat > "$CONFIG_DIR/client.yaml" <<EOF
 mode: "client"
 server_url: "http://${SIP}:${SPORT}/tunnel"
@@ -275,7 +292,7 @@ mimic:
   session_cookie: true
 
 obfs:
-  enabled: true
+  enabled: ${OBFS_BOOL}
   min_padding: 16
   max_padding: 256
 
@@ -285,7 +302,7 @@ EOF
 
     create_service "client"
     systemctl restart picotun-client
-    ok "Client started."
+    ok "Client configured and started."
     read -p "Press Enter to continue..."
 }
 
@@ -355,7 +372,7 @@ manage_service() {
 
 uninstall_all() {
     echo ""
-    echo -e "${RED}⚠️  WARNING: This will remove everything!${NC}"
+    echo -e "${RED}⚠️  WARNING: This will remove RsTunnel Binary, Configs, and Services!${NC}"
     read -p "Are you sure? [y/N]: " yn
     if [[ "$yn" =~ ^[Yy] ]]; then
         systemctl stop picotun-server picotun-client 2>/dev/null || true
@@ -364,6 +381,7 @@ uninstall_all() {
         systemctl daemon-reload
         rm -rf "$CONFIG_DIR" "$BIN_PATH" "$BUILD_DIR"
         ok "Uninstalled completely."
+        sleep 2
         exit 0
     fi
 }
@@ -374,7 +392,7 @@ main_menu() {
         echo "1) Install Server"
         echo "2) Install Client"
         echo "3) Settings (Manage Services)"
-        echo "4) System Optimizer"
+        echo "4) System Optimizer (BBR/TCP)"
         echo "5) Update Core / Re-install"
         echo "6) Show Logs"
         echo "7) Uninstall"
