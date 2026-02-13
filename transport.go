@@ -24,9 +24,38 @@ type HTTPConn struct {
 	PSK       string
 	SessionID string
 	ServerURL string
+
+	// Path-level behaviors (Dagger-like)
+	RetryInterval time.Duration // per-path retry interval
+	Aggressive    bool          // aggressive_pool
+	nextTryNS     int64         // unix nano; internal cooldown timestamp
+}
+
+func (hc *HTTPConn) canTry(now time.Time) bool {
+	nt := atomic.LoadInt64(&hc.nextTryNS)
+	return nt == 0 || now.UnixNano() >= nt
+}
+
+func (hc *HTTPConn) markFail(now time.Time) {
+	ri := hc.RetryInterval
+	if ri <= 0 {
+		ri = 3 * time.Second
+	}
+	// aggressive pool retries faster
+	if hc.Aggressive {
+		if ri > 500*time.Millisecond {
+			ri = 500 * time.Millisecond
+		}
+	}
+	atomic.StoreInt64(&hc.nextTryNS, now.Add(ri).UnixNano())
+}
+
+func (hc *HTTPConn) markOK() {
+	atomic.StoreInt64(&hc.nextTryNS, 0)
 }
 
 func (hc *HTTPConn) RoundTrip(payload []byte) ([]byte, error) {
+(payload []byte) ([]byte, error) {
 	if hc.Client == nil {
 		hc.Client = &http.Client{Timeout: 25 * time.Second}
 	}
@@ -177,10 +206,34 @@ func (t *HTTPMuxTransport) loop() {
 			time.Sleep(t.cfg.IdlePoll)
 		}
 
-		conn := t.pickConn()
-		resp, err := conn.RoundTrip(buf.Bytes())
+		// Try multiple conns (multi-path) before sleeping.
+		now := time.Now()
+		var (
+			resp []byte
+			err  error
+		)
+		tried := 0
+		for tried < len(t.conns) {
+			conn := t.pickConn()
+			tried++
+			if conn != nil && !conn.canTry(now) {
+				continue
+			}
+			resp, err = conn.RoundTrip(buf.Bytes())
+			if err != nil {
+				if conn != nil {
+					conn.markFail(now)
+				}
+				continue
+			}
+			if conn != nil {
+				conn.markOK()
+			}
+			break
+		}
 		if err != nil {
-			time.Sleep(200 * time.Millisecond)
+			// All conns failed; small sleep to avoid tight loop.
+			time.Sleep(250 * time.Millisecond)
 			return
 		}
 		if len(resp) == 0 {

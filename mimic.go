@@ -36,6 +36,16 @@ func ApplyMimicHeaders(req *http.Request, cfg *MimicConfig, sessionID string) {
 		req.Header.Set("User-Agent", "Mozilla/5.0")
 	}
 
+
+	// If no custom headers provided, apply a Dagger-like minimal set.
+	if len(cfg.CustomHeaders) == 0 {
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+		if cfg.FakeDomain != "" {
+			refer := "https://" + cfg.FakeDomain + "/"
+			req.Header.Set("Referer", refer)
+		}
+	}
+
 	// Custom headers "Key: Value"
 	for _, h := range cfg.CustomHeaders {
 		parts := strings.SplitN(h, ":", 2)
