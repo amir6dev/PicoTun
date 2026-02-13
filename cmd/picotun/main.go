@@ -83,21 +83,59 @@ func main() {
 			cfg.SessionID = "sess-default"
 		}
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+>>>>>>> 62fc88353bdf49aa22a0ab96b51f1b4749e1d595
+>>>>>>> 761e0881dbe95042a42689a9d133dc400c8d6457
 		// Prefer Dagger-style paths (multi-path)
 		var paths []httpmux.PathConfig
 		if len(cfg.Paths) > 0 {
 			paths = cfg.Paths
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+=======
+		// Prefer Dagger-style paths
+		var path httpmux.PathConfig
+		if len(cfg.Paths) > 0 {
+			path = cfg.Paths[0]
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
+>>>>>>> 62fc88353bdf49aa22a0ab96b51f1b4749e1d595
+>>>>>>> 761e0881dbe95042a42689a9d133dc400c8d6457
 		} else {
 			if strings.TrimSpace(cfg.ServerURL) == "" {
 				log.Fatal("client requires either 'paths:' or 'server_url:'")
 			}
+<<<<<<< HEAD
 			paths = append(paths, httpmux.PathConfig{
+=======
+<<<<<<< HEAD
+			paths = append(paths, httpmux.PathConfig{
+=======
+<<<<<<< HEAD
+			paths = append(paths, httpmux.PathConfig{
+=======
+			path = httpmux.PathConfig{
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
+>>>>>>> 62fc88353bdf49aa22a0ab96b51f1b4749e1d595
+>>>>>>> 761e0881dbe95042a42689a9d133dc400c8d6457
 				Transport:      "httpmux",
 				Addr:           cfg.ServerURL,
 				ConnectionPool: 2,
 				AggressivePool: true,
 				RetryInterval:  3,
 				DialTimeout:    10,
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+>>>>>>> 62fc88353bdf49aa22a0ab96b51f1b4749e1d595
+>>>>>>> 761e0881dbe95042a42689a9d133dc400c8d6457
 			})
 		}
 
@@ -110,6 +148,22 @@ func main() {
 		} else {
 			log.Printf("client started. (no paths?) session_id=%s", cfg.SessionID)
 		}
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+=======
+			}
+		}
+
+		cl := httpmux.NewClientFromPath(path, cfg.SessionID, &cfg.Mimic, &cfg.Obfs, cfg.PSK)
+		rev := httpmux.NewClientReverse(cl.Transport)
+		go rev.Run()
+
+		log.Printf("client started. transport=%s addr=%s session_id=%s", path.Transport, path.Addr, cfg.SessionID)
+>>>>>>> de61458072bfcfd0a2ba33f1a1c20aaacc44f94c
+>>>>>>> 62fc88353bdf49aa22a0ab96b51f1b4749e1d595
+>>>>>>> 761e0881dbe95042a42689a9d133dc400c8d6457
 		for {
 			time.Sleep(60 * time.Second)
 		}

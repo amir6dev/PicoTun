@@ -55,6 +55,7 @@ func (hc *HTTPConn) markOK() {
 }
 
 func (hc *HTTPConn) RoundTrip(payload []byte) ([]byte, error) {
+(payload []byte) ([]byte, error) {
 	if hc.Client == nil {
 		hc.Client = &http.Client{Timeout: 25 * time.Second}
 	}
