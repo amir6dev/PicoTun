@@ -121,6 +121,11 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) listenOnPort(addr string) error {
+	// Trojan bypasses the HTTP/WS infrastructure entirely — raw TLS listener
+	if strings.ToLower(s.Config.Transport) == "trojan" {
+		return s.serveTrojan(addr)
+	}
+
 	tunnelPath := mimicPath(s.Mimic)
 	prefix := strings.Split(tunnelPath, "{")[0]
 

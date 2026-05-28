@@ -8,7 +8,7 @@ import (
 	httpmux "github.com/amir6dev/PicoTun"
 )
 
-var version = "2.5.6"
+var version = "2.5.7"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")

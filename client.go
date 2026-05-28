@@ -182,6 +182,12 @@ func (c *Client) connectAndServe(id int, path PathConfig) error {
 	if transport == "" {
 		transport = c.cfg.Transport
 	}
+
+	// Trojan transport: raw TLS + auth token, no HTTP/WS handshake
+	if transport == "trojan" {
+		return c.connectAndServeTrojan(id, path)
+	}
+
 	addr := strings.TrimSpace(path.Addr)
 	if addr == "" {
 		return fmt.Errorf("empty address")
@@ -500,7 +506,7 @@ func (c *Client) fragmentCfg() *FragmentConfig {
 	}
 	transport := strings.ToLower(c.cfg.Transport)
 	// v2.5.1: Enable fragment for httpmux too (helps DPI evasion on plain HTTP)
-	if transport == "httpsmux" || transport == "wssmux" || transport == "httpmux" || transport == "wsmux" {
+	if transport == "httpsmux" || transport == "wssmux" || transport == "httpmux" || transport == "wsmux" || transport == "trojan" {
 		cfg := DefaultFragmentConfig()
 		return &cfg
 	}
@@ -521,7 +527,7 @@ func parseAddr(addr, transport string) (host, port string) {
 	if err != nil {
 		h = addr
 		switch transport {
-		case "httpsmux", "wssmux":
+		case "httpsmux", "wssmux", "trojan":
 			p = "443"
 		default:
 			p = "80"

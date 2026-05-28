@@ -64,10 +64,16 @@ type Config struct {
 		UDP []string `yaml:"udp"`
 	} `yaml:"forward"`
 
-	Mimic MimicConfig `yaml:"mimic"`
-	Obfs  ObfsConfig  `yaml:"obfs"`
+	Trojan TrojanConfig `yaml:"trojan"`
+	Mimic  MimicConfig  `yaml:"mimic"`
+	Obfs   ObfsConfig   `yaml:"obfs"`
 
 	SessionTimeout int `yaml:"session_timeout"`
+}
+
+type TrojanConfig struct {
+	SNI        string `yaml:"sni"`         // override TLS SNI (default: derived from server address)
+	SkipVerify bool   `yaml:"skip_verify"` // skip TLS cert verification (not recommended — defeats the point)
 }
 
 type StealthConfig struct {
@@ -276,7 +282,7 @@ func applyBaseDefaults(c *Config) {
 	}
 	transport := strings.ToLower(c.Transport)
 	// v2.5.1: Enable fragment for all HTTP transports (helps DPI evasion)
-	if !c.Fragment.Enabled && (transport == "httpsmux" || transport == "wssmux" || transport == "httpmux" || transport == "wsmux") {
+	if !c.Fragment.Enabled && (transport == "httpsmux" || transport == "wssmux" || transport == "httpmux" || transport == "wsmux" || transport == "trojan") {
 		c.Fragment.Enabled = true
 	}
 
