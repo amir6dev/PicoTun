@@ -752,9 +752,9 @@ install_server_automatic() {
     fi
 
     # HTTP Mimicry defaults
-    HTTP_DOMAIN="www.google.com"
-    HTTP_PATH="/search"
-    HTTP_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    HTTP_DOMAIN="accounts.google.com"
+    HTTP_PATH="/o/oauth2/auth"
+    HTTP_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
     # v2.5: Multi-port tunnel (optional)
     echo ""
@@ -885,9 +885,9 @@ install_server_manual() {
     fi
 
     # HTTP Mimicry
-    HTTP_DOMAIN="www.google.com"
-    HTTP_PATH="/search"
-    HTTP_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    HTTP_DOMAIN="accounts.google.com"
+    HTTP_PATH="/o/oauth2/auth"
+    HTTP_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     if [ "$TRANSPORT" == "httpmux" ] || [ "$TRANSPORT" == "httpsmux" ]; then
         configure_http_mimicry
     fi
@@ -1161,9 +1161,9 @@ install_client_manual() {
     esac
 
     # HTTP Mimicry
-    HTTP_DOMAIN="www.google.com"
-    HTTP_PATH="/search"
-    HTTP_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    HTTP_DOMAIN="accounts.google.com"
+    HTTP_PATH="/o/oauth2/auth"
+    HTTP_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     if [ "$TRANSPORT" == "httpmux" ] || [ "$TRANSPORT" == "httpsmux" ]; then
         configure_http_mimicry
     fi

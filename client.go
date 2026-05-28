@@ -158,6 +158,7 @@ func (c *Client) poolWorker(id int) {
 				if backoff > 15*time.Second {
 					backoff = 15 * time.Second
 				}
+				log.Printf("[POOL#%d] error: %v", id, err)
 				log.Printf("[POOL#%d] retry in %v (fails=%d alive=%d)",
 					id, backoff.Round(time.Millisecond), failCount, alive)
 				time.Sleep(backoff)
@@ -223,9 +224,11 @@ func (c *Client) connectAndServe(id int, path PathConfig) error {
 	c.setTCPOptions(conn)
 
 	// ② Mimicry handshake — v2.5.1: stealth rotation per connection
-	conn, err = ClientHandshakeWithStealth(conn, c.mimic, &c.cfg.Stealth)
+	// Save rawConn before overwriting conn — ClientHandshakeWithStealth returns nil on error.
+	rawConn := conn
+	conn, err = ClientHandshakeWithStealth(rawConn, c.mimic, &c.cfg.Stealth)
 	if err != nil {
-		conn.Close()
+		rawConn.Close()
 		return fmt.Errorf("handshake: %w", err)
 	}
 
