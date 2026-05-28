@@ -629,14 +629,6 @@ key_file: "$KEY_FILE"
 EOF
     fi
 
-    if [ "$TRANSPORT" == "trojan" ] && [ -n "$TROJAN_SNI" ]; then
-        cat >> "$CONFIG_FILE" << EOF
-
-trojan:
-  sni: "${TROJAN_SNI}"
-EOF
-    fi
-
     printf "\nmaps:\n$MAPPINGS" >> "$CONFIG_FILE"
 
     cat >> "$CONFIG_FILE" << EOF
