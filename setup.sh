@@ -149,6 +149,70 @@ generate_ssl_cert() {
     echo -e "  ${GREEN}Certificate generated (${CERT_DOMAIN})${NC}"
 }
 
+configure_trojan_cert() {
+    echo ""
+    echo -e "  ${WHITE}Trojan requires a REAL TLS certificate:${NC}"
+    echo -e "  ${GRAY}(Self-signed won't work — clients verify the cert)${NC}"
+    echo ""
+    echo "    1) Get free Let's Encrypt certificate (certbot)"
+    echo "    2) Use existing certificate files"
+    echo ""
+    read -p "  Choice [1-2]: " cert_choice
+
+    CERT_FILE=""
+    KEY_FILE=""
+    TROJAN_SNI=""
+
+    if [ "$cert_choice" == "2" ]; then
+        read -p "  Certificate path (fullchain.pem): " CERT_FILE
+        read -p "  Private key path (privkey.pem): " KEY_FILE
+        read -p "  Domain (SNI): " TROJAN_SNI
+        if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+            echo -e "  ${RED}Certificate files not found${NC}"
+            return 1
+        fi
+        echo -e "  ${GREEN}Certificate loaded (${TROJAN_SNI})${NC}"
+        return 0
+    fi
+
+    # certbot path
+    read -p "  Your domain (e.g., tun.example.com): " TROJAN_DOMAIN
+    if [ -z "$TROJAN_DOMAIN" ]; then
+        echo -e "  ${RED}Domain required${NC}"
+        return 1
+    fi
+
+    echo -e "  ${GRAY}Installing certbot...${NC}"
+    if command -v apt &>/dev/null; then
+        apt install -y certbot > /dev/null 2>&1
+    elif command -v yum &>/dev/null; then
+        yum install -y certbot > /dev/null 2>&1
+    fi
+
+    if ! command -v certbot &>/dev/null; then
+        echo -e "  ${RED}certbot not found — install manually and use option 2${NC}"
+        return 1
+    fi
+
+    echo -e "  ${YELLOW}Getting certificate for ${TROJAN_DOMAIN}...${NC}"
+    echo -e "  ${GRAY}(Port 80 must be free for this step)${NC}"
+    certbot certonly --standalone -d "$TROJAN_DOMAIN" \
+        --non-interactive --agree-tos \
+        --register-unsafely-without-email 2>&1 | tail -5
+
+    CERT_FILE="/etc/letsencrypt/live/${TROJAN_DOMAIN}/fullchain.pem"
+    KEY_FILE="/etc/letsencrypt/live/${TROJAN_DOMAIN}/privkey.pem"
+
+    if [ ! -f "$CERT_FILE" ]; then
+        echo -e "  ${RED}Certificate generation failed — check DNS and port 80${NC}"
+        return 1
+    fi
+
+    TROJAN_SNI="$TROJAN_DOMAIN"
+    echo -e "  ${GREEN}Certificate obtained for ${TROJAN_DOMAIN}${NC}"
+    return 0
+}
+
 # ═════════════════════════════════════════
 #  SYSTEMD SERVICE
 # ═════════════════════════════════════════
@@ -565,6 +629,14 @@ key_file: "$KEY_FILE"
 EOF
     fi
 
+    if [ "$TRANSPORT" == "trojan" ] && [ -n "$TROJAN_SNI" ]; then
+        cat >> "$CONFIG_FILE" << EOF
+
+trojan:
+  sni: "${TROJAN_SNI}"
+EOF
+    fi
+
     printf "\nmaps:\n$MAPPINGS" >> "$CONFIG_FILE"
 
     cat >> "$CONFIG_FILE" << EOF
@@ -628,6 +700,14 @@ http_mimic:
     - "Accept-Language: en-US,en;q=0.9"
     - "Accept-Encoding: gzip, deflate, br"
     - "Referer: https://${HTTP_DOMAIN}/"
+EOF
+    fi
+
+    if [ "$TRANSPORT" == "trojan" ] && [ -n "$TROJAN_SNI" ]; then
+        cat >> "$CONFIG_FILE" << EOF
+
+trojan:
+  sni: "${TROJAN_SNI}"
 EOF
     fi
 }
@@ -703,6 +783,14 @@ http_mimic:
     - "Referer: https://${HTTP_DOMAIN}/"
 EOF
     fi
+
+    if [ "$TRANSPORT" == "trojan" ] && [ -n "$TROJAN_SNI" ]; then
+        cat >> "$CONFIG_FILE" << EOF
+
+trojan:
+  sni: "${TROJAN_SNI}"
+EOF
+    fi
 }
 
 # ═════════════════════════════════════════
@@ -732,14 +820,22 @@ install_server_automatic() {
     echo "    1) httpmux   - HTTP Mimicry (DPI bypass)"
     echo "    2) httpsmux  - HTTPS Mimicry (TLS + DPI bypass)"
     echo "    3) tcpmux    - Simple TCP"
+    echo "    4) trojan    - Trojan TLS (Real cert — strongest DPI bypass)"
     echo ""
-    read -p "  Choice [1-3]: " trans_choice
+    read -p "  Choice [1-4]: " trans_choice
     case $trans_choice in
         1) TRANSPORT="httpmux" ;;
         2) TRANSPORT="httpsmux" ;;
         3) TRANSPORT="tcpmux" ;;
+        4) TRANSPORT="trojan" ;;
         *) TRANSPORT="httpmux" ;;
     esac
+
+    # Default port 443 for trojan
+    if [ "$TRANSPORT" == "trojan" ] && [ "$LISTEN_PORT" == "2020" ]; then
+        LISTEN_PORT="443"
+        echo -e "  ${GRAY}Trojan: defaulting to port 443${NC}"
+    fi
 
     # Port mappings
     port_mapping_wizard
@@ -747,8 +843,11 @@ install_server_automatic() {
     # SSL cert
     CERT_FILE=""
     KEY_FILE=""
+    TROJAN_SNI=""
     if [ "$TRANSPORT" == "httpsmux" ]; then
         generate_ssl_cert
+    elif [ "$TRANSPORT" == "trojan" ]; then
+        configure_trojan_cert || { press_enter; main_menu; return; }
     fi
 
     # HTTP Mimicry defaults
@@ -823,18 +922,22 @@ install_server_manual() {
     echo "    1) tcpmux    - TCP Multiplexing (Simple)"
     echo "    2) httpmux   - HTTP Mimicry (DPI bypass)"
     echo "    3) httpsmux  - HTTPS Mimicry (TLS + DPI bypass)"
+    echo "    4) trojan    - Trojan TLS (Real cert — strongest DPI bypass)"
     echo ""
-    read -p "  Choice [1-3]: " trans_choice
+    read -p "  Choice [1-4]: " trans_choice
     case $trans_choice in
         1) TRANSPORT="tcpmux" ;;
         2) TRANSPORT="httpmux" ;;
         3) TRANSPORT="httpsmux" ;;
+        4) TRANSPORT="trojan" ;;
         *) TRANSPORT="httpmux" ;;
     esac
 
     echo ""
-    read -p "  Tunnel Port [2020]: " LISTEN_PORT
-    LISTEN_PORT=${LISTEN_PORT:-2020}
+    local default_port="2020"
+    [ "$TRANSPORT" == "trojan" ] && default_port="443"
+    read -p "  Tunnel Port [${default_port}]: " LISTEN_PORT
+    LISTEN_PORT=${LISTEN_PORT:-$default_port}
 
     echo ""
     while true; do
@@ -865,6 +968,7 @@ install_server_manual() {
     # SSL
     CERT_FILE=""
     KEY_FILE=""
+    TROJAN_SNI=""
     if [ "$TRANSPORT" == "httpsmux" ]; then
         echo ""
         echo -e "  ${WHITE}TLS Certificate:${NC}"
@@ -882,6 +986,8 @@ install_server_manual() {
         else
             generate_ssl_cert
         fi
+    elif [ "$TRANSPORT" == "trojan" ]; then
+        configure_trojan_cert || { press_enter; main_menu; return; }
     fi
 
     # HTTP Mimicry
@@ -986,22 +1092,34 @@ install_client_automatic() {
     echo "    1) httpmux   - HTTP Mimicry"
     echo "    2) httpsmux  - HTTPS Mimicry"
     echo "    3) tcpmux    - Simple TCP"
+    echo "    4) trojan    - Trojan TLS (Real cert)"
     echo ""
-    read -p "  Choice [1-3]: " trans_choice
+    read -p "  Choice [1-4]: " trans_choice
     case $trans_choice in
         1) TRANSPORT="httpmux" ;;
         2) TRANSPORT="httpsmux" ;;
         3) TRANSPORT="tcpmux" ;;
+        4) TRANSPORT="trojan" ;;
         *) TRANSPORT="httpmux" ;;
     esac
 
     echo ""
-    read -p "  Server IP:Port (e.g., 1.2.3.4:2020): " SERVER_ADDR
+    if [ "$TRANSPORT" == "trojan" ]; then
+        read -p "  Server Domain:Port (e.g., tun.picdev.online:443): " SERVER_ADDR
+    else
+        read -p "  Server IP:Port (e.g., 1.2.3.4:2020): " SERVER_ADDR
+    fi
     if [ -z "$SERVER_ADDR" ]; then
         echo -e "  ${RED}Address required${NC}"
         press_enter
         main_menu
         return
+    fi
+
+    # Extract SNI from domain for trojan
+    TROJAN_SNI=""
+    if [ "$TRANSPORT" == "trojan" ]; then
+        TROJAN_SNI=$(echo "$SERVER_ADDR" | cut -d: -f1)
     fi
 
     echo ""
@@ -1109,17 +1227,27 @@ install_client_manual() {
     echo "    1) tcpmux    - TCP Multiplexing"
     echo "    2) httpmux   - HTTP Mimicry"
     echo "    3) httpsmux  - HTTPS Mimicry"
+    echo "    4) trojan    - Trojan TLS (Real cert)"
     echo ""
-    read -p "  Choice [1-3]: " trans_choice
+    read -p "  Choice [1-4]: " trans_choice
     case $trans_choice in
         1) TRANSPORT="tcpmux" ;;
         2) TRANSPORT="httpmux" ;;
         3) TRANSPORT="httpsmux" ;;
+        4) TRANSPORT="trojan" ;;
         *) TRANSPORT="httpmux" ;;
     esac
 
     echo ""
-    read -p "  Server IP:Port (e.g., 1.2.3.4:2020): " SERVER_ADDR
+    if [ "$TRANSPORT" == "trojan" ]; then
+        read -p "  Server Domain:Port (e.g., tun.picdev.online:443): " SERVER_ADDR
+    else
+        read -p "  Server IP:Port (e.g., 1.2.3.4:2020): " SERVER_ADDR
+    fi
+    TROJAN_SNI=""
+    if [ "$TRANSPORT" == "trojan" ]; then
+        TROJAN_SNI=$(echo "$SERVER_ADDR" | cut -d: -f1)
+    fi
     if [ -z "$SERVER_ADDR" ]; then
         echo -e "  ${RED}Address required${NC}"
         press_enter
