@@ -130,15 +130,19 @@ func (s *Server) listenOnPort(addr string) error {
 
 	log.Printf("[SERVER] port %s ready (tunnel=%s)", addr, prefix)
 
+	transport := strings.ToLower(s.Config.Transport)
+
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 16,
+		// Disable HTTP/2: Go's net/http enables h2 automatically over TLS via ALPN.
+		// Our clients send HTTP/1.1 WebSocket upgrades — h2 causes "bogus greeting" errors.
+		TLSNextProto: make(map[string]func(*http.Server, *tls.Config, http.Handler)),
 	}
 
-	transport := strings.ToLower(s.Config.Transport)
 	if transport == "httpsmux" || transport == "wssmux" {
 		// httpsmux requires TLS — use configured certs or auto-generate self-signed.
 		// Client always uses InsecureSkipVerify so self-signed is fine.
@@ -185,6 +189,7 @@ func selfSignedTLS() (*tls.Config, error) {
 			PrivateKey:  key,
 		}},
 		MinVersion: tls.VersionTLS12,
+		NextProtos: []string{"http/1.1"}, // no h2 — clients use HTTP/1.1 WebSocket upgrade
 	}, nil
 }
 
