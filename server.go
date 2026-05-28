@@ -1,11 +1,17 @@
 package httpmux
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"strings"
@@ -124,14 +130,62 @@ func (s *Server) listenOnPort(addr string) error {
 
 	log.Printf("[SERVER] port %s ready (tunnel=%s)", addr, prefix)
 
-	server := &http.Server{
+	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 16,
 	}
-	return server.ListenAndServe()
+
+	transport := strings.ToLower(s.Config.Transport)
+	if transport == "httpsmux" || transport == "wssmux" {
+		// httpsmux requires TLS — use configured certs or auto-generate self-signed.
+		// Client always uses InsecureSkipVerify so self-signed is fine.
+		if s.Config.CertFile != "" && s.Config.KeyFile != "" {
+			log.Printf("[SERVER] TLS: cert=%s", s.Config.CertFile)
+			return srv.ListenAndServeTLS(s.Config.CertFile, s.Config.KeyFile)
+		}
+		tlsCfg, err := selfSignedTLS()
+		if err != nil {
+			return fmt.Errorf("TLS self-sign: %w", err)
+		}
+		log.Printf("[SERVER] TLS: self-signed certificate (auto-generated)")
+		ln, err := tls.Listen("tcp", addr, tlsCfg)
+		if err != nil {
+			return err
+		}
+		return srv.Serve(ln)
+	}
+	return srv.ListenAndServe()
+}
+
+// selfSignedTLS generates an in-memory self-signed ECDSA certificate.
+// Used when transport=httpsmux but no cert_file/key_file is configured.
+func selfSignedTLS() (*tls.Config, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{Organization: []string{"CDN"}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{{
+			Certificate: [][]byte{der},
+			PrivateKey:  key,
+		}},
+		MinVersion: tls.VersionTLS12,
+	}, nil
 }
 
 // ──────────────── Tunnel Handler ────────────────
