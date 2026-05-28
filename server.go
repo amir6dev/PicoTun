@@ -140,7 +140,7 @@ func (s *Server) listenOnPort(addr string) error {
 		MaxHeaderBytes:    1 << 16,
 		// Disable HTTP/2: Go's net/http enables h2 automatically over TLS via ALPN.
 		// Our clients send HTTP/1.1 WebSocket upgrades — h2 causes "bogus greeting" errors.
-		TLSNextProto: make(map[string]func(*http.Server, *tls.Config, http.Handler)),
+		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
 
 	if transport == "httpsmux" || transport == "wssmux" {
